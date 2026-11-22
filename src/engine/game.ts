@@ -4,11 +4,18 @@ import { MAPS, MAP_BY_ID } from '../data/maps';
 import type { Activity, Item, Mods, Rarity, Slot, Stat } from '../data/types';
 import { RARITIES, SLOTS, STATS } from '../data/types';
 import { Battle, type Bag, type PartyMember } from './battle';
+import { audio } from '../audio/audio';
+import { generateLayout } from '../render/mapgen';
 import { autoAlloc, derive, mergeMods, nodeUnlocked, statPointsFor, talentPointsFor, TICK, xpToNext, MAX_LEVEL, MIN_PRESTIGE_LEVEL, zeroStats, type Derived } from './formulas';
 import { itemScore, rollItem, sellValue } from './loot';
 import { mulberry32 } from './rng';
 import { exportSave, importSave, loadSave, MAX_INV, newChar, newSave, SAVE_KEY, writeSave, type CharSave, type SaveData } from './save';
 import { member, simulate } from './sim';
+import { CONS_BY_ID, upgradeChance, upgradeCost, UPGRADE_MAX } from '../data/shops';
+import { MAP_BY_ID as MAPS_BY_ID } from '../data/maps';
+import { addMods } from './formulas';
+import { blacksmithStock, buyPrice, effMods, equippedList, repairCost, sellPrice, stockWindow } from './shop';
+import { Town } from './town';
 
 export const OFFLINE_CAP = 8 * 3600;
 export const OFFLINE_EFFICIENCY = 0.85;
@@ -31,6 +38,10 @@ export class Game {
   bag: Bag = { hp: 0, mp: 0, hpTh: 0.4, mpTh: 0.25, on: true };
   acc = 0; private saveT = 0; private seen = { xp: 0, gold: 0, kills: 0, elites: 0, bosses: 0, floors: 0, deaths: 0 };
   private mercCache = new Map<string, PartyMember>();
+  scene: 'town' | 'field' = 'field';
+  town = new Town();
+  transition: { title: string; sub: string; phase: 'out' | 'hold' | 'in' } | null = null;
+  private boostT = 0;
   private tid = 1;
 
   get has() { return !!this.save; }
@@ -46,13 +57,16 @@ export class Game {
       this.save = s;
       this.refreshDerived();
       this.startBattle();
+      this.scene = s.inTown ? 'town' : 'field';
+      audio.setEnabled(s.settings.sound); audio.setScene(s.inTown ? 'cidade' : s.mapId);
       const elapsed = (Date.now() - s.ts) / 1000;
-      if (elapsed > 60) this.applyOffline(elapsed);
+      this.tickBoosts(Math.min(elapsed, OFFLINE_CAP));
+      if (elapsed > 60 && !s.inTown) this.applyOffline(elapsed);
     }
     this.emit();
   }
   newGame(classId: string) {
-    this.save = newSave(classId);
+    this.save = newSave(classId); this.scene = 'field'; audio.setEnabled(true); audio.setScene('esgoto');
     this.refreshDerived(); this.startBattle(); this.persist(); this.emit();
   }
   subscribe = (l: Listener) => { this.listeners.add(l); return () => { this.listeners.delete(l); }; };
@@ -65,7 +79,12 @@ export class Game {
   }
 
   // ───────────── derivados ─────────────
-  gearMods(c = this.char): Mods[] { return SLOTS.map((s) => c.equipped[s]?.mods).filter(Boolean) as Mods[]; }
+  gearMods(c = this.char): Mods[] { return [...equippedList(c.equipped).map(effMods), this.boostMods()]; }
+  boostMods(): Mods {
+    const m: Mods = {};
+    for (const id in this.save.boosts) { const c = CONS_BY_ID[id]; if (c?.boost && this.save.boosts[id] > 0) addMods(m, c.boost.mods); }
+    return m;
+  }
   derivedFor(classId: string): Derived {
     const c = this.save.chars[classId] ?? newChar();
     return derive({ classId, level: c.level, alloc: c.alloc, talents: c.talents, gear: this.gearMods(c), rebirths: this.save.rebirths });
@@ -109,20 +128,25 @@ export class Game {
       playerLevel: this.char.level, party, fx: true, bag: this.bag,
       xpBonus: this.derived.mods.xpPct ?? 0, goldBonus: this.derived.mods.goldPct ?? 0, dropBonus: this.derived.mods.dropPct ?? 0,
     });
+    this.battle.layout = generateLayout(this.save.mapId, (Date.now() ^ 0x51ed) >>> 0);
     this.seen = { xp: 0, gold: 0, kills: 0, elites: 0, bosses: 0, floors: 0, deaths: 0 };
+    this.syncBoostBuffs();
   }
 
   update(dtReal: number) {
     if (!this.save) return;
-    if (dtReal > 15) { this.applyOffline(dtReal); return; }
-    this.acc += Math.min(dtReal, 0.25);
-    let n = 0;
-    while (this.acc >= TICK && n < 8) { this.battle.step(TICK); this.afterStep(); this.acc -= TICK; n++; }
-    if (this.acc > TICK * 8) this.acc = 0;
+    this.boostT += dtReal;
+    if (this.boostT >= 1) { this.tickBoosts(this.boostT); this.boostT = 0; }
     for (const t of this.toasts) t.t -= dtReal;
     if (this.toasts.length && this.toasts[0].t <= 0) this.toasts = this.toasts.filter((t) => t.t > 0);
     this.saveT += dtReal;
     if (this.saveT > 10) { this.saveT = 0; this.persist(); }
+    if (this.scene === 'town') { this.town.update(Math.min(dtReal, 0.1)); return; }
+    if (dtReal > 15) { this.tickBoosts(dtReal); this.applyOffline(dtReal); return; }
+    this.acc += Math.min(dtReal, 0.25);
+    let n = 0;
+    while (this.acc >= TICK && n < 8) { this.battle.step(TICK); this.afterStep(); this.acc -= TICK; n++; }
+    if (this.acc > TICK * 8) this.acc = 0;
   }
 
   private afterStep() {
@@ -132,8 +156,8 @@ export class Game {
       this.gainXp(dx);
     }
     if (a.kills !== s.kills) { sv.stats.kills += a.kills - s.kills; s.kills = a.kills; }
-    if (a.bosses !== s.bosses) { sv.stats.bosses += a.bosses - s.bosses; s.bosses = a.bosses; this.toast('Chefe derrotado!', '#ffcf6a'); }
-    if (a.deaths !== s.deaths) { sv.stats.deaths += a.deaths - s.deaths; s.deaths = a.deaths; }
+    if (a.bosses !== s.bosses) { sv.stats.bosses += a.bosses - s.bosses; s.bosses = a.bosses; const gm = 1 + Math.floor(Math.random() * 2); sv.gems += gm; this.toast(`Chefe derrotado! +${gm} gema${gm > 1 ? 's' : ''}`, '#ffcf6a'); }
+    if (a.deaths !== s.deaths) { sv.stats.deaths += a.deaths - s.deaths; this.wearGear(a.deaths - s.deaths); s.deaths = a.deaths; }
     if (b.loot.length) {
       for (const l of b.loot) { const it = rollItem(b.rng, l.ilvl, l.tier, undefined, this.derived.mods.dropPct ?? 0); this.receiveItem(it, true); }
       b.loot.length = 0;
@@ -142,6 +166,118 @@ export class Game {
       sv.floor = b.floor; sv.bestFloor[sv.mapId] = Math.max(sv.bestFloor[sv.mapId] ?? 1, b.floor);
     }
     this.bag.hp = Math.max(0, this.bag.hp);
+  }
+
+  // ───────────── cena: cidade / campo ─────────────
+  private runTransition(title: string, sub: string, fn: () => void) {
+    if (this.transition) return;
+    this.transition = { title, sub, phase: 'out' }; this.emit();
+    setTimeout(() => { fn(); this.transition = { title, sub, phase: 'hold' }; this.emit(); }, 330);
+    setTimeout(() => { if (this.transition) { this.transition.phase = 'in'; this.emit(); } }, 1250);
+    setTimeout(() => { this.transition = null; this.emit(); }, 1700);
+  }
+  goTown() {
+    if (this.scene === 'town') return;
+    this.runTransition('Vila Pedrafria', 'Cidade segura — sem combate e sem ganho de XP', () => {
+      this.persist(); this.scene = 'town'; this.save.inTown = true; this.town.player.x = this.town.player.px = 10; this.town.player.y = this.town.player.py = 21.5; this.town.player.path = []; this.town.pending = null;
+      audio.setScene('cidade'); this.persist();
+    });
+  }
+  goField() {
+    if (this.scene === 'field') return;
+    const m = MAPS_BY_ID[this.save.mapId];
+    this.runTransition(m.name, `Nível recomendado ${m.minLv}–${m.maxLv}`, () => {
+      this.scene = 'field'; this.save.inTown = false; this.startBattle(); audio.setScene(this.save.mapId); this.persist();
+    });
+  }
+  /** Viaja para um mapa: grátis na cidade (portal); em campo consome um Pergaminho de Teleporte. */
+  travel(id: string): boolean {
+    if (!this.mapUnlocked(id)) return false;
+    const m = MAPS_BY_ID[id];
+    if (this.scene === 'field' && id !== this.save.mapId) {
+      if ((this.save.cons.scroll_tp ?? 0) < 1) { this.toast('Precisa de um Pergaminho de Teleporte', '#ff9090'); return false; }
+      this.save.cons.scroll_tp--;
+    }
+    this.save.mapId = id; this.save.floor = 1;
+    this.runTransition(m.name, `Nível recomendado ${m.minLv}–${m.maxLv}`, () => {
+      this.scene = 'field'; this.save.inTown = false; this.startBattle(); audio.setScene(id); this.persist();
+    });
+    return true;
+  }
+
+  // ───────────── consumíveis / boosts ─────────────
+  tickBoosts(dt: number) {
+    let ch = false;
+    for (const id of Object.keys(this.save.boosts)) {
+      this.save.boosts[id] -= dt;
+      if (this.save.boosts[id] <= 0) { delete this.save.boosts[id]; ch = true; }
+    }
+    if (ch) this.refreshDerived();
+    this.syncBoostBuffs();
+  }
+  private syncBoostBuffs() {
+    const p = this.battle?.player; if (!p) return;
+    p.buffs = p.buffs.filter((b) => !b.id.startsWith('boost:'));
+    for (const id in this.save.boosts) { const c = CONS_BY_ID[id]; if (c?.boost) p.buffs.push({ id: 'boost:' + id, name: c.name, icon: c.icon, col: c.col, t: this.save.boosts[id], dur: c.boost.dur, mods: {} }); }
+  }
+  buyCons(id: string, n = 1): boolean {
+    const c = CONS_BY_ID[id]; if (!c) return false;
+    const gold = c.price(this.char.level) * n, gems = (c.gems ?? 0) * n;
+    if (this.save.gold < gold || this.save.gems < gems) return false;
+    this.save.gold -= gold; this.save.gems -= gems; this.save.cons[id] = (this.save.cons[id] ?? 0) + n; this.emit(); return true;
+  }
+  useCons(id: string): boolean {
+    const c = CONS_BY_ID[id]; if (!c || (this.save.cons[id] ?? 0) < 1 || c.kind !== 'boost' || !c.boost) return false;
+    this.save.cons[id]--; this.save.boosts[id] = c.boost.dur;
+    this.refreshDerived(); this.syncBoostBuffs(); this.toast(`${c.name} ativado`, c.col); this.emit(); return true;
+  }
+
+  // ───────────── ferreiro / durabilidade ─────────────
+  wearGear(n: number) {
+    let any = false;
+    for (const it of equippedList(this.char.equipped)) { it.dur = Math.max(0, (it.dur ?? 100) - 8 * n); any = true; }
+    if (any) { this.refreshDerived(); this.toast('Equipamento danificado — repare no Ferreiro', '#ffb060'); }
+  }
+  shopStock() {
+    const win = stockWindow();
+    if (this.save.shop.win !== win) { this.save.shop = { win, bought: [] }; }
+    return blacksmithStock(this.char.level, win).map((it) => ({ it, sold: this.save.shop.bought.includes(it.id) }));
+  }
+  buyShopItem(id: string): Item | null {
+    const e = this.shopStock().find((x) => x.it.id === id); if (!e || e.sold) return null;
+    const price = buyPrice(e.it);
+    if (this.save.gold < price || this.save.inventory.length >= MAX_INV) return null;
+    this.save.gold -= price; this.save.shop.bought.push(id);
+    const it = { ...e.it, mods: { ...e.it.mods }, id: e.it.id + '-' + Date.now().toString(36) };
+    this.save.inventory.push(it); this.persist(); this.emit(); return it;
+  }
+  findItem(id: string): { it: Item; eq: boolean } | null {
+    const a = this.save.inventory.find((x) => x.id === id); if (a) return { it: a, eq: false };
+    const b = equippedList(this.char.equipped).find((x) => x.id === id); return b ? { it: b, eq: true } : null;
+  }
+  upgradeItem(id: string): 'ok' | 'fail' | 'down' | 'gold' | 'max' | null {
+    const f = this.findItem(id); if (!f) return null;
+    const it = f.it; const next = (it.plus ?? 0) + 1;
+    if (next > UPGRADE_MAX) return 'max';
+    const cost = upgradeCost(it.ilvl, next);
+    if (this.save.gold < cost) return 'gold';
+    this.save.gold -= cost;
+    let res: 'ok' | 'fail' | 'down' = 'ok';
+    if (Math.random() < upgradeChance(next)) it.plus = next;
+    else if (next >= 8) { it.plus = Math.max(0, next - 2); res = 'down'; } else res = 'fail';
+    if (f.eq) this.refreshDerived();
+    this.persist(); this.emit(); return res;
+  }
+  repairAll(): number {
+    const items = equippedList(this.char.equipped); const cost = items.reduce((a, i) => a + repairCost(i), 0);
+    if (cost <= 0 || this.save.gold < cost) return -1;
+    this.save.gold -= cost; items.forEach((i) => { i.dur = 100; }); this.refreshDerived(); this.emit(); return cost;
+  }
+  classSwitchCost() { return 100 + this.char.level * 25; }
+  guildSwitch(id: string): boolean {
+    if (id === this.save.active) return false;
+    const c = this.classSwitchCost(); if (this.save.gold < c) return false;
+    this.save.gold -= c; this.switchClass(id); return true;
   }
 
   // ───────────── XP / nível ─────────────
@@ -202,11 +338,11 @@ export class Game {
   }
   sell(id: string) {
     const i = this.save.inventory.findIndex((x) => x.id === id); if (i < 0) return;
-    this.save.gold += sellValue(this.save.inventory[i]); this.save.inventory.splice(i, 1); this.emit();
+    this.save.gold += sellPrice(this.save.inventory[i]); this.save.inventory.splice(i, 1); this.emit();
   }
   sellBelow(r: Rarity) {
     const max = RARITIES.indexOf(r); let g = 0;
-    this.save.inventory = this.save.inventory.filter((it) => { if (RARITIES.indexOf(it.rarity) <= max) { g += sellValue(it); return false; } return true; });
+    this.save.inventory = this.save.inventory.filter((it) => { if (RARITIES.indexOf(it.rarity) <= max) { g += sellPrice(it); return false; } return true; });
     this.save.gold += g; this.emit(); return g;
   }
 
@@ -264,7 +400,7 @@ export class Game {
 
   // ───────────── mapas / atividades ─────────────
   mapUnlocked(id: string) { return this.maxLevelEver >= MAP_BY_ID[id].minLv; }
-  setMap(id: string) { if (!this.mapUnlocked(id)) return; this.save.mapId = id; this.save.floor = 1; this.startBattle(true); this.persist(); this.emit(); }
+  setMap(id: string) { this.travel(id); }
   setActivity(a: Activity) { this.save.activity = a; this.save.floor = 1; this.startBattle(true); this.persist(); this.emit(); }
   setMerc(slot: number, id: string | null) { this.save.mercs[slot] = id; this.mercCache.clear(); if (this.save.activity === 'party') this.startBattle(true); this.emit(); }
   mapsUnlockedList() { return MAPS.filter((m) => this.mapUnlocked(m.id)); }
@@ -293,7 +429,7 @@ export class Game {
     if (this.save.inventory.length >= MAX_INV) { this.save.gold += sellValue(it); this.emit(); return it; }
     this.save.inventory.push(it); this.emit(); return it;
   }
-  setSettings(p: Partial<SaveData['settings']>) { Object.assign(this.save.settings, p); this.refreshDerived(); this.emit(); }
+  setSettings(p: Partial<SaveData['settings']>) { Object.assign(this.save.settings, p); audio.setEnabled(this.save.settings.sound); this.refreshDerived(); this.emit(); }
 
   // ───────────── offline ─────────────
   applyOffline(elapsed: number) {
@@ -309,7 +445,7 @@ export class Game {
       const r = simulate({ classId: sv.active, level: this.char.level, activity: sv.activity, mapId: sv.mapId, seconds: 90, seed: 1000 + i, floor: sv.activity === 'dungeon' ? sv.floor : 1, derived: this.derived, party, rebirths: sv.rebirths });
       const k = (cs / r.secs) * OFFLINE_EFFICIENCY;
       const xp = r.acc.xp * k, gold = r.acc.gold * k, kills = r.acc.kills * k;
-      sum.xp += xp; sum.gold += gold; sum.kills += kills; sum.deaths += r.acc.deaths * k;
+      sum.xp += xp; sum.gold += gold; sum.kills += kills; sum.deaths += r.acc.deaths * k; if (r.acc.deaths * k >= 1) this.wearGear(Math.min(3, Math.round(r.acc.deaths * k)));
       sv.gold += Math.round(gold);
       this.gainXp(xp);
       for (let t = 0; t < 3; t++) {
@@ -331,6 +467,9 @@ export class Game {
     this.save = s; this.refreshDerived(); this.startBattle(); this.persist(); this.emit();
   }
   hardReset() { try { localStorage.removeItem(SAVE_KEY); } catch { /* */ } this.save = undefined as unknown as SaveData; this.emit(); }
+  /** serviço aberto (tela de loja) — definido ao chegar à porta na cidade */
+  service: string | null = null;
+  openService(id: string | null) { this.service = id; this.emit(); }
   rarityList = RARITIES;
 }
 

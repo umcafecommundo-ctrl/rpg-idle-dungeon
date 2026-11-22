@@ -6,14 +6,17 @@ import { skillMpCost } from '../engine/formulas';
 import { iconURL } from '../render/icons';
 import { Renderer } from '../render/renderer';
 import { useGame } from './hooks';
-import { CharacterPanel, InventoryPanel, MapsPanel, ShopPanel, SkillsPanel } from './panels';
+import { CharacterPanel, InventoryPanel, MapsPanel, SkillsPanel } from './panels';
+import { ServiceSheet } from './town';
+import { SERVICES } from '../data/shops';
+import { audio } from '../audio/audio';
 import { OfflineModal, SettingsPanel } from './settings';
 import { spriteFor } from '../render/sprites';
 
-type Tab = 'char' | 'skills' | 'inv' | 'maps' | 'shop' | 'cfg';
+type Tab = 'char' | 'skills' | 'inv' | 'maps' | 'cfg';
 const TABS: { id: Tab; label: string; ico: string }[] = [
   { id: 'char', label: 'Personagem', ico: '⚔' }, { id: 'skills', label: 'Skills', ico: '✦' }, { id: 'inv', label: 'Inventário', ico: '🎒' },
-  { id: 'maps', label: 'Mapas', ico: '🗺' }, { id: 'shop', label: 'Loja', ico: '💰' },
+  { id: 'maps', label: 'Mapas', ico: '🗺' },
 ];
 
 export function App() {
@@ -22,9 +25,11 @@ export function App() {
     game.init();
     const iv = setInterval(() => game.emit(), 400);
     const vis = () => { if (document.hidden) game.persist(); };
+    const unlock = () => audio.unlock();
+    document.addEventListener('pointerdown', unlock);
     document.addEventListener('visibilitychange', vis);
     window.addEventListener('pagehide', vis);
-    return () => { clearInterval(iv); document.removeEventListener('visibilitychange', vis); window.removeEventListener('pagehide', vis); };
+    return () => { clearInterval(iv); document.removeEventListener('pointerdown', unlock); document.removeEventListener('visibilitychange', vis); window.removeEventListener('pagehide', vis); };
   }, []);
   if (!g.has) return <ClassSelect />;
   return <Main />;
@@ -70,8 +75,10 @@ function Main() {
     <div className="app">
       <div className="arena">
         <CombatCanvas />
-        {!tab && <button className="gear" aria-label="Configurações" onClick={() => setTab('cfg')}>⚙</button>}
+        {!tab && !g.service && <button className="gear" aria-label="Configurações" onClick={() => setTab('cfg')}>⚙</button>}
+        {!tab && !g.service && g.scene === 'field' && <button className="homebtn" onClick={() => game.goTown()}>🏠 Voltar à cidade</button>}
         <div className="toasts">{g.toasts.map((t) => <div key={t.id} className="toast" style={{ color: t.col }}>{t.text}</div>)}</div>
+        {g.service && !tab && <ServiceSheet id={g.service} />}
         {tab && (
           <div className="sheet">
             <div className="sheet-h"><b>{tab === 'cfg' ? 'Configurações' : TABS.find((t) => t.id === tab)!.label}</b><button onClick={() => setTab(null)} aria-label="Fechar">✕</button></div>
@@ -80,20 +87,25 @@ function Main() {
               {tab === 'skills' && <SkillsPanel />}
               {tab === 'inv' && <InventoryPanel />}
               {tab === 'maps' && <MapsPanel />}
-              {tab === 'shop' && <ShopPanel />}
               {tab === 'cfg' && <SettingsPanel />}
             </div>
           </div>
         )}
       </div>
-      <SkillBar />
+      {g.scene === 'town' ? <TownBar /> : <SkillBar />}
       <nav className="nav">
         {TABS.map((t) => (
-          <button key={t.id} className={tab === t.id ? 'on' : ''} onClick={() => setTab(tab === t.id ? null : t.id)}>
+          <button key={t.id} className={tab === t.id ? 'on' : ''} onClick={() => { game.openService(null); setTab(tab === t.id ? null : t.id); }}>
             <span className="ico">{t.ico}</span><span className="lbl">{t.label}</span>
           </button>
         ))}
+        <button className={g.scene === 'town' ? 'on' : ''} onClick={() => { setTab(null); game.openService(null); if (g.scene === 'town') game.goField(); else game.goTown(); }}>
+          <span className="ico">{g.scene === 'town' ? '⚔' : '🏠'}</span><span className="lbl">{g.scene === 'town' ? 'Caçar' : 'Cidade'}</span>
+        </button>
       </nav>
+      <div className={'fade' + (g.transition && g.transition.phase !== 'in' ? ' show' : '')}>
+        {g.transition && <div className="fadebox"><div className="ft">{g.transition.title}</div><div className="fs">{g.transition.sub}</div></div>}
+      </div>
       {g.summary && <OfflineModal s={g.summary} onClose={() => { game.summary = null; game.emit(); }} />}
     </div>
   );
@@ -109,11 +121,18 @@ function CombatCanvas() {
     const loop = (now: number) => {
       const dt = (now - last) / 1000; last = now;
       game.update(dt);
-      if (game.has) r.draw(game, now);
+      if (game.has) {
+        if (game.scene === 'town' && game.town.arrived && !game.service) { const id = game.town.arrived; game.town.arrived = null; game.openService(id); }
+        r.draw(game, now);
+      }
       raf = requestAnimationFrame(loop);
     };
     raf = requestAnimationFrame(loop);
-    const down = (e: PointerEvent) => { const p = r.toArena(e.clientX, e.clientY); game.battle.focusAt(p.x, p.y); };
+    const down = (e: PointerEvent) => {
+      if (game.transition) return;
+      if (game.scene === 'town') { if (game.service) return; const p = r.toTown(e.clientX, e.clientY); game.town.tap(p.x, p.y); return; }
+      const p = r.toArena(e.clientX, e.clientY); game.battle.focusAt(p.x, p.y);
+    };
     cv.addEventListener('pointerdown', down);
     return () => { cancelAnimationFrame(raf); ro.disconnect(); cv.removeEventListener('pointerdown', down); };
   }, []);
@@ -164,6 +183,21 @@ function SkillBar() {
           </button>
         );
       })}
+    </div>
+  );
+}
+
+function TownBar() {
+  const g = useGame();
+  return (
+    <div className="townbar">
+      <div className="tinfo"><span>Na cidade não há combate nem ganho de XP.</span>
+        <button className="btn small" onClick={() => game.goField()}>⚔ Voltar à caçada</button></div>
+      <div className="tgrid">
+        {SERVICES.map((s) => (
+          <button key={s.id} className={'tbtn' + (s.ready ? '' : ' soon')} onClick={() => { game.openService(null); g.town.goTo(s.id); }}>{s.short}</button>
+        ))}
+      </div>
     </div>
   );
 }

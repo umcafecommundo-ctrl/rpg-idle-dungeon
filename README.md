@@ -21,6 +21,12 @@ npm run sim -- 40 45   # tabela de balanceamento no terminal: nível 40, 45 s po
 - **Save** automático em `localStorage`, exportar/importar como texto, e **ganhos offline** (limite 8 h, 85% de eficiência) com tela de resumo.
 - **Tela de debug/balanceamento** (⚙ → debug): roda a simulação das 6 classes em todos os cenários e verifica a regra de design.
 
+## Cidade e ambientação (v2)
+- **Vila Pedrafria**: cidade segura (toque para andar, BFS), praça com fonte, ruas de pedra, casas, árvores, postes, bancos, aldeões, gatos, pássaros e ciclo dia/noite (luzes acendem à noite). Sem combate e sem ganho de XP/offline enquanto você estiver nela.
+- **Funcionando**: Ferreiro (comprar com estoque rotativo de 3h, melhorar +1 a +10 com falha a partir do +6, reparar durabilidade, baú), Loja de Itens (poções, elixires de buff, Pergaminho de Teleporte e de XP), Mercado (vender/venda rápida por raridade), Portal (mapas), Taverna (mercenários), Guilda (trocar de classe com custo, resetar talentos) e Templo (renascimento). Loja de Magia, Banco e Joalheiro têm NPC e placa, mas a tela é “em breve”.
+- **Mapas com arte própria**: Floresta e Cripta (chão em manchas com 4–5 variações, decalques, objetos com colisão, copas acima do personagem, luz/escuridão, partículas, água/chama animadas, música e sons procedurais). Os demais mapas ainda usam o fundo genérico.
+- Dados: `src/data/mapart.ts` (arte dos mapas), `src/data/town.ts` (layout da cidade), `src/data/shops.ts` (consumíveis, melhorias, serviços).
+
 ## Estrutura
 ```
 src/data/      classes.ts  mobs.ts  maps.ts  items.ts  types.ts   ← tudo que se balanceia

@@ -89,3 +89,14 @@ input[type=number] { width: 70px; } input[type=range] { padding: 0; flex: 1; }
 .ccard { display: flex; gap: 10px; align-items: center; text-align: left; background: var(--panel); border: 2px solid; border-radius: 12px; padding: 8px 10px; }
 .csprite { width: 64px; height: 64px; image-rendering: pixelated; background: #0c0812; border-radius: 8px; flex: none; }
 .cdesc { font-size: 12px; margin-top: 2px; } .cstrong { font-size: 11px; color: var(--acc); } .cstats { font-size: 10px; color: var(--mut); margin-top: 2px; }
+
+.homebtn { position: absolute; left: 6px; bottom: 6px; background: rgba(14,8,22,.82); border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; font-size: 11px; font-weight: 700; z-index: 3; }
+.wallet { display: flex; gap: 14px; padding: 4px 12px; background: #0e0814; border-bottom: 1px solid var(--line); font-size: 12px; color: var(--acc); }
+.fade { position: absolute; inset: 0; background: #07040b; opacity: 0; pointer-events: none; transition: opacity .33s ease; z-index: 50; display: grid; place-items: center; }
+.fade.show { opacity: 1; pointer-events: auto; }
+.fadebox { text-align: center; padding: 0 20px; } .ft { font-size: 24px; color: var(--acc); letter-spacing: 1px; text-shadow: 0 0 12px rgba(255,207,106,.4); } .fs { margin-top: 8px; color: var(--mut); font-size: 13px; }
+.townbar { background: linear-gradient(#1a1224, #120c18); border-top: 2px solid var(--line); padding: 6px; display: flex; flex-direction: column; gap: 6px; }
+.tinfo { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 11px; color: var(--mut); }
+.tgrid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 4px; }
+.tbtn { background: var(--panel); border: 1px solid #4a3860; border-radius: 6px; padding: 8px 2px; font-size: 10.5px; } .tbtn.soon { opacity: .55; } .tbtn:active { background: var(--panel2); }
+.cmp { display: flex; flex-direction: column; font-size: 12px; }

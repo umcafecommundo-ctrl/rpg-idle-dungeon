@@ -6,6 +6,7 @@ import { STATS } from '../data/types';
 import type { Derived } from './formulas';
 import { addMods, defK, killsPerLevel, refAtk, refDef, refHp, skillMpCost, TICK, xpLevelFactor, xpToNext } from './formulas';
 import { pickW, type Rng } from './rng';
+import type { Layout } from '../render/mapgen';
 
 export const ARENA_W = 12;
 export const ARENA_H = 16;
@@ -70,6 +71,7 @@ export class Battle {
   player!: Actor; floor: number; floorKills = 0; spawnT = 0.5; bossSpawned = false;
   reviveAt = -1; potCd = 0; potMpCd = 0; banner = ''; bannerT = 0;
   playerLevel: number;
+  layout: Layout | null = null;
 
   constructor(cfg: BattleCfg) {
     this.cfg = cfg; this.rng = cfg.rng; this.floor = cfg.floor; this.playerLevel = cfg.playerLevel;
@@ -376,6 +378,10 @@ export class Battle {
         }
       }
       a.x = Math.max(0.6, Math.min(ARENA_W - 0.6, a.x)); a.y = Math.max(0.8, Math.min(ARENA_H - 0.8, a.y));
+      if (this.layout && !a.flying) for (const o of this.layout.obstacles) {
+        const dx = a.x - o.x, dy = a.y - o.y, d = Math.hypot(dx, dy), m = o.r + 0.28 * Math.min(a.scale, 1.6);
+        if (d < m && d > 0.0001) { a.x = o.x + (dx / d) * m; a.y = o.y + (dy / d) * m; }
+      }
     }
   }
 

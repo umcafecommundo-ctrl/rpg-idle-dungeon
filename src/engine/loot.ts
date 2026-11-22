@@ -39,7 +39,7 @@ export function rollItem(r: Rng, ilvl: number, tier: 0 | 1 | 2 = 0, slot?: Slot,
 export const sellValue = (it: Item) => Math.round((5 + it.ilvl * 2.2) * SELL_MULT[it.rarity]);
 
 const pct = (v: number) => `${+(v * 100).toFixed(1)}%`;
-const MOD_LABEL: [keyof Mods, string, boolean][] = [
+export const MOD_LABEL: [keyof Mods, string, boolean][] = [
   ['wAtk', 'Dano de arma', false], ['def', 'DEF', false], ['mdef', 'RES Mág.', false], ['hp', 'HP', false], ['mp', 'MP', false],
   ['for', 'FOR', false], ['agi', 'AGI', false], ['int', 'INT', false], ['vit', 'VIT', false], ['sab', 'SAB', false],
   ['crit', 'Crítico', true], ['critDmg', 'Dano crítico', true], ['aspd', 'Vel. ataque', true], ['cdr', 'Recarga', true],

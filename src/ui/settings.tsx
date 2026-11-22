@@ -45,6 +45,9 @@ export function SettingsPanel() {
         <div className="row"><span>MP abaixo de <b>{Math.round(st.mpTh * 100)}%</b></span><input type="range" min={5} max={90} step={5} value={st.mpTh * 100} onChange={(e) => g.setSettings({ mpTh: +e.target.value / 100 })} /></div>
       </div>
       <div className="card">
+        <label className="row check"><input type="checkbox" checked={st.sound} onChange={(e) => g.setSettings({ sound: e.target.checked })} /> <b>Música e sons ambientes</b></label>
+      </div>
+      <div className="card">
         <b>Venda automática de drops</b>
         <div className="row">
           <select value={st.autoSell} onChange={(e) => g.setSettings({ autoSell: e.target.value as typeof st.autoSell })}>

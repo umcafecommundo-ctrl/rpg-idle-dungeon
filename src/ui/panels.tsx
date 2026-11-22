@@ -11,7 +11,9 @@ import { fmt, MIN_PRESTIGE_LEVEL, nodeUnlocked, skillMpCost, xpToNext } from '..
 import { describeMods, itemScore, sellValue } from '../engine/loot';
 import { MAX_INV } from '../engine/save';
 import { iconURL } from '../render/icons';
-import { game } from '../engine/game';
+import { CONSUMABLES } from '../data/shops';
+import { itemName } from '../engine/shop';
+import { Dur, ItemLines } from './town';
 import { useGame } from './hooks';
 
 const Bar = ({ v, col, label }: { v: number; col: string; label?: string }) => (
@@ -31,11 +33,12 @@ export function CharacterPanel() {
     <div className="stack">
       <div className="chips">
         {CLASSES.map((k) => (
-          <button key={k.id} className={'chip' + (k.id === cls.id ? ' on' : '')} style={{ borderColor: k.color, color: k.color }} onClick={() => g.switchClass(k.id)}>
+          <button key={k.id} className={'chip' + (k.id === cls.id ? ' on' : '')} style={{ borderColor: k.color, color: k.color }} onClick={() => g.toast('Troque de classe na Guilda, na cidade', '#9ad0ff')}>
             {k.name}<small>Nv {g.save.chars[k.id]?.level ?? '–'}</small>
           </button>
         ))}
       </div>
+      <div className="muted small">Para trocar de classe, vá à Guilda dos Aventureiros na cidade.</div>
       <div className="card">
         <b style={{ color: cls.color }}>{cls.name}</b> <span className="role">{cls.role}</span>
         <div className="muted">{cls.desc} <i>{cls.strong}</i></div>
@@ -133,12 +136,11 @@ export function SkillsPanel() {
 
 // ───────────────────────── Inventário ─────────────────────────
 function ItemCard({ it, eq, children }: { it: Item; eq?: Item; children?: React.ReactNode }) {
-  const lines = describeMods(it.mods, kindLabel);
   const diff = eq ? itemScore(it) - itemScore(eq) : 0;
   return (
     <div className="card item" style={{ borderColor: RARITY_COLOR[it.rarity] }}>
-      <div className="row"><b style={{ color: RARITY_COLOR[it.rarity] }}>{it.name}</b><span className="muted small">{RARITY_LABEL[it.rarity]} · {SLOT_LABEL[it.slot]} · iLv {it.ilvl}</span></div>
-      <div className="mods">{lines.map((l) => <span key={l}>{l}</span>)}</div>
+      <div className="row"><b style={{ color: RARITY_COLOR[it.rarity] }}>{itemName(it)}</b><span className="muted small">{RARITY_LABEL[it.rarity]} · {SLOT_LABEL[it.slot]} · iLv {it.ilvl}</span></div>
+      <ItemLines it={it} /><Dur it={it} />
       {eq && <div className={'small ' + (diff >= 0 ? 'up' : 'down')}>{diff >= 0 ? '▲ melhor' : '▼ pior'} que o equipado</div>}
       {children}
     </div>
@@ -152,6 +154,14 @@ export function InventoryPanel() {
   const eqSel = selSlot ? g.char.equipped[selSlot] : undefined;
   return (
     <div className="stack">
+      <div className="card"><b>Consumíveis</b>
+        {CONSUMABLES.filter((c) => (g.save.cons[c.id] ?? 0) > 0 || g.save.boosts[c.id]).length === 0 && <div className="muted small">Nenhum. Compre elixires e pergaminhos na Loja de Itens (cidade).</div>}
+        {CONSUMABLES.filter((c) => (g.save.cons[c.id] ?? 0) > 0 || g.save.boosts[c.id]).map((c) => (
+          <div className="row" key={c.id}><img className="pico" style={{ width: 28, height: 28 }} src={iconURL(c.icon, c.col)} alt="" />
+            <div className="grow"><b>{c.name}</b> <span className="muted small">x{g.save.cons[c.id] ?? 0}{g.save.boosts[c.id] ? ` · ativo ${Math.ceil(g.save.boosts[c.id] / 60)}min` : ''}</span></div>
+            {c.kind === 'boost' ? <button className="btn small" disabled={(g.save.cons[c.id] ?? 0) < 1} onClick={() => g.useCons(c.id)}>Usar</button> : <span className="muted small">Use ao trocar de mapa</span>}
+          </div>))}
+      </div>
       <div className="eqgrid">
         {SLOTS.map((s) => {
           const e = g.char.equipped[s];
@@ -178,7 +188,7 @@ export function InventoryPanel() {
           const eq = g.char.equipped[x.slot]; const better = !eq || itemScore(x) > itemScore(eq);
           return (
             <button key={x.id} className={'irow' + (sel === x.id ? ' on' : '')} style={{ borderLeftColor: RARITY_COLOR[x.rarity] }} onClick={() => { setSel(sel === x.id ? null : x.id); setSelSlot(null); }}>
-              <b style={{ color: RARITY_COLOR[x.rarity] }}>{x.name}</b><small>{SLOT_LABEL[x.slot]} · iLv {x.ilvl}</small>{better && <span className="up">▲</span>}
+              <b style={{ color: RARITY_COLOR[x.rarity] }}>{itemName(x)}</b><small>{SLOT_LABEL[x.slot]} · iLv {x.ilvl}</small>{better && <span className="up">▲</span>}
             </button>
           );
         })}
@@ -188,7 +198,7 @@ export function InventoryPanel() {
 }
 
 // ───────────────────────── Mapas ─────────────────────────
-export function MapsPanel() {
+export function MapsPanel({ portal = false }: { portal?: boolean }) {
   const g = useGame(); const sv = g.save;
   const [open, setOpen] = useState<string>(sv.mapId);
   const [showTable, setShowTable] = useState(false);
@@ -200,6 +210,7 @@ export function MapsPanel() {
         {ACTIVITIES.map((a) => <button key={a} className={'chip' + (sv.activity === a ? ' on' : '')} onClick={() => g.setActivity(a)}>{ACTIVITY_LABEL[a]}</button>)}
       </div>
       <div className="muted small">{ACTIVITY_DESC[sv.activity]}</div>
+      {!portal && g.scene === 'field' && <div className="muted small">Trocar de mapa em campo consome 1 Pergaminho de Teleporte (você tem {sv.cons.scroll_tp ?? 0}). Na cidade, o Portal é grátis.</div>}
       {sv.activity === 'party' && (
         <div className="card"><b>Mercenários</b>
           {[0, 1, 2].map((i) => (
@@ -265,27 +276,3 @@ export function TypeTable() {
   );
 }
 
-// ───────────────────────── Loja ─────────────────────────
-export function ShopPanel() {
-  const g = useGame(); const [last, setLast] = useState<Item | null>(null);
-  const gold = g.save.gold;
-  return (
-    <div className="stack">
-      <div className="card"><b>Ouro:</b> <span className="hl">{fmt(gold)}</span></div>
-      {(['hp', 'mp'] as const).map((k) => (
-        <div className="card row" key={k}>
-          <img className="pico" src={iconURL(k === 'hp' ? 'potion' : 'potionmp', k === 'hp' ? '#ff5a6a' : '#4a9aff')} alt="" />
-          <div className="grow"><b>Poção de {k === 'hp' ? 'HP' : 'MP'}</b><div className="muted small">{k === 'hp' ? 'Cura 45% do HP máx.' : 'Restaura 50% do MP máx.'} · Estoque: {g.bag[k]}</div></div>
-          <button className="btn small" disabled={gold < g.potionPrice(k)} onClick={() => g.buyPotion(k, 1)}>x1 · {fmt(g.potionPrice(k))}</button>
-          <button className="btn small" disabled={gold < g.potionPrice(k) * 10} onClick={() => g.buyPotion(k, 10)}>x10</button>
-        </div>
-      ))}
-      <div className="card">
-        <div className="row"><div className="grow"><b>Baú de equipamento</b><div className="muted small">Item aleatório de nível {g.level}, com chance maior de raros.</div></div>
-          <button className="btn small" disabled={gold < g.chestPrice()} onClick={() => setLast(g.buyChest())}>{fmt(g.chestPrice())}</button></div>
-        {last && <ItemCard it={last} />}
-      </div>
-      <div className="card muted small">Poções automáticas usam o estoque quando HP/MP ficam abaixo do limite configurado (⚙ Configurações).</div>
-    </div>
-  );
-}

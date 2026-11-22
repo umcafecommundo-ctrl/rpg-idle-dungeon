@@ -6,12 +6,19 @@ import { fmt, TICK, xpToNext } from '../engine/formulas';
 import type { Game } from '../engine/game';
 import { iconCanvas } from './icons';
 import { mapBackground, spriteFor, tintOf, whiteOf } from './sprites';
+import { MapScene } from './mapscene';
+import { TownScene } from './townscene';
+import { TOWN } from '../data/town';
+import { Town } from '../engine/town';
 
 const FONT = 'ui-monospace, Menlo, Consolas, "Courier New", monospace';
 
 export class Renderer {
   ctx: CanvasRenderingContext2D;
   W = 0; H = 0; dpr = 1; S = 1; ox = 0; oy = 0;
+  scene: MapScene | null = null; private sceneKey: unknown = null; townScene: TownScene | null = null;
+  private labels: (() => void)[] = []; private lastNow = 0;
+  camX = 0; camY = 0; townS = 1;
   constructor(public canvas: HTMLCanvasElement) { this.ctx = canvas.getContext('2d')!; }
 
   resize() {
@@ -30,6 +37,12 @@ export class Renderer {
     return { x: (px - this.ox) / this.S / 16, y: (py - this.oy) / this.S / 16 };
   }
 
+  toTown(clientX: number, clientY: number) {
+    const r = this.canvas.getBoundingClientRect();
+    const px = (clientX - r.left) * this.dpr, py = (clientY - r.top) * this.dpr;
+    return { x: (px / this.townS) / 16 + this.camX, y: (py / this.townS) / 16 + this.camY };
+  }
+
   private font(px: number, bold = true) { return `${bold ? '700 ' : ''}${Math.round(px)}px ${FONT}`; }
   private text(t: string, x: number, y: number, col: string, px: number, align: CanvasTextAlign = 'center', bold = true) {
     const g = this.ctx; g.font = this.font(px, bold); g.textAlign = align; g.textBaseline = 'middle';
@@ -45,33 +58,51 @@ export class Renderer {
   }
 
   draw(game: Game, now: number) {
+    if (game.scene === 'town') { this.drawTown(game, now); return; }
     const g = this.ctx, S = this.S, b = game.battle, dpr = this.dpr;
     const alpha = Math.min(1, game.acc / TICK);
+    const dt = Math.min(0.1, (now - this.lastNow) / 1000); this.lastNow = now;
     g.imageSmoothingEnabled = false;
     g.fillStyle = '#0c0812'; g.fillRect(0, 0, this.W, this.H);
     const map = MAP_BY_ID[game.save.mapId];
+    // cena em camadas (se o mapa tiver arte própria) — senão, fundo genérico
+    if (b.layout && this.sceneKey !== b.layout) { this.scene = new MapScene(map.id, b.layout); this.sceneKey = b.layout; }
+    if (!b.layout) { this.scene = null; this.sceneKey = null; }
+    const sc = this.scene;
+    const T = { ox: this.ox, oy: this.oy, S, W: this.W, H: this.H, dpr };
     const bg = mapBackground(map);
-    g.drawImage(bg, this.ox, this.oy, ARENA_W * 16 * S, ARENA_H * 16 * S);
-    const rest = this.H - (this.oy + ARENA_H * 16 * S);
-    if (rest > 0) { g.drawImage(bg, 0, (ARENA_H - 1) * 16, ARENA_W * 16, 16, this.ox, this.oy + ARENA_H * 16 * S, ARENA_W * 16 * S, rest + 1); g.fillStyle = 'rgba(0,0,0,0.25)'; g.fillRect(0, this.oy + ARENA_H * 16 * S, this.W, rest + 1); }
-    // brilho das tochas
-    const fl = 0.5 + 0.5 * Math.sin(now * 0.008);
-    for (const tx of [21, ARENA_W * 16 - 20]) {
-      const gr = g.createRadialGradient(this.ox + tx * S, this.oy + 6 * S, 0, this.ox + tx * S, this.oy + 6 * S, 46 * S);
-      gr.addColorStop(0, map.theme.accent + (fl > 0.5 ? '55' : '40')); gr.addColorStop(1, map.theme.accent + '00');
-      g.fillStyle = gr; g.fillRect(this.ox, this.oy, ARENA_W * 16 * S, 80 * S);
+    const drawFloorExtension = (img: HTMLCanvasElement) => {
+      const rest = this.H - (this.oy + ARENA_H * 16 * S);
+      if (rest > 0) { g.drawImage(img, 0, (ARENA_H - 1) * 16, ARENA_W * 16, 16, this.ox, this.oy + ARENA_H * 16 * S, ARENA_W * 16 * S, rest + 1); g.fillStyle = 'rgba(0,0,0,0.25)'; g.fillRect(0, this.oy + ARENA_H * 16 * S, this.W, rest + 1); }
+    };
+    if (sc) { sc.update(dt); sc.drawGround(g, T); drawFloorExtension(sc.ground); sc.drawWater(g, T, now); }
+    else {
+      g.drawImage(bg, this.ox, this.oy, ARENA_W * 16 * S, ARENA_H * 16 * S); drawFloorExtension(bg);
+      const fl = 0.5 + 0.5 * Math.sin(now * 0.008);
+      for (const tx of [21, ARENA_W * 16 - 20]) {
+        const gr = g.createRadialGradient(this.ox + tx * S, this.oy + 6 * S, 0, this.ox + tx * S, this.oy + 6 * S, 46 * S);
+        gr.addColorStop(0, map.theme.accent + (fl > 0.5 ? '55' : '40')); gr.addColorStop(1, map.theme.accent + '00');
+        g.fillStyle = gr; g.fillRect(this.ox, this.oy, ARENA_W * 16 * S, 80 * S);
+      }
     }
-
     // avisos de AoE no chão
     for (const f of b.fx) if (f.kind === 'warn') {
       const p = f.t / f.dur; g.fillStyle = `rgba(255,50,50,${0.12 + 0.22 * p})`; g.strokeStyle = 'rgba(255,80,80,0.8)'; g.lineWidth = 2;
       g.beginPath(); g.arc(this.X(f.x), this.Y(f.y), f.r * 16 * S, 0, 7); g.fill(); g.stroke();
     }
-
-    // atores ordenados por y
-    const list = b.actors.slice().sort((p, q) => p.y - q.y);
-    for (const a of list) this.drawActor(a, b, alpha, now);
-
+    // atores + objetos ordenados por y
+    this.labels = [];
+    type It = { y: number; draw: () => void };
+    const items: It[] = b.actors.map((a) => ({ y: a.y, draw: () => this.drawActor(a, b, alpha, now) }));
+    if (sc) for (const p of sc.items) items.push({ y: p.y, draw: () => sc.drawItem(g, p, T, now) });
+    items.sort((p, q) => p.y - q.y);
+    for (const it of items) it.draw();
+    if (sc) {
+      sc.drawCanopies(g, T, b.actors.filter((a) => !a.dead));
+      sc.particles.draw(g, T, 'top'); sc.particles.draw(g, T, 'fog');
+      sc.fullLighting(g, T, now, b.player.dead ? undefined : { x: b.player.px + (b.player.x - b.player.px) * alpha, y: b.player.py + (b.player.y - b.player.py) * alpha });
+    }
+    for (const l of this.labels) l();
     // efeitos
     for (const f of b.fx) if (f.kind !== 'warn') this.drawFx(f);
     // números
@@ -82,6 +113,61 @@ export class Renderer {
       g.globalAlpha = 1;
     }
     this.hud(game, now);
+    this.minimap(game);
+  }
+
+  private drawTown(game: Game, now: number) {
+    const g = this.ctx, dpr = this.dpr, town = game.town;
+    const S = this.S * 12 / 14; this.townS = S; // a cidade mostra 14 tiles de largura
+    g.imageSmoothingEnabled = false;
+    g.fillStyle = '#0c0812'; g.fillRect(0, 0, this.W, this.H);
+    if (!this.townScene) this.townScene = new TownScene();
+    const vw = this.W / (16 * S), vh = this.H / (16 * S);
+    const p = town.player;
+    this.camX = TOWN.w <= vw ? (TOWN.w - vw) / 2 : Math.max(0, Math.min(TOWN.w - vw, p.x - vw / 2));
+    this.camY = TOWN.h <= vh ? (TOWN.h - vh) / 2 : Math.max(0, Math.min(TOWN.h - vh, p.y - vh / 2));
+    const T = { ox: -this.camX * 16 * S, oy: -this.camY * 16 * S, S, W: this.W, H: this.H, dpr };
+    const cls = game.cls.id;
+    this.townScene.draw(g, T, town, now, (x, y) => {
+      const img = spriteFor('class:' + cls, '');
+      const bob = p.path.length ? Math.abs(Math.sin(now * 0.016)) * 1.6 * S : 0;
+      g.save(); g.translate(x, y - bob); g.scale(p.face < 0 ? -1 : 1, 1); g.drawImage(img, -8 * S, -14 * S, 16 * S, 16 * S); g.restore();
+      this.text(game.cls.name, x, y - 18 * S - bob, '#ffffff', 8.5 * dpr);
+    });
+    // HUD da cidade
+    const pad = 6 * dpr; const w = Math.min(this.W * 0.5, 176 * dpr);
+    g.fillStyle = 'rgba(14,8,22,0.62)'; g.fillRect(pad, pad, w, 34 * dpr);
+    g.strokeStyle = 'rgba(255,255,255,0.18)'; g.strokeRect(pad + 0.5, pad + 0.5, w - 1, 34 * dpr - 1);
+    const night = Town.nightness();
+    this.text(`${TOWN.name} ${night > 0.4 ? '☾' : '☀'}`, pad + 6 * dpr, pad + 9 * dpr, '#ffe9b0', 10 * dpr, 'left');
+    this.text(`Ouro ${fmt(game.save.gold)}   Gemas ${game.save.gems}`, pad + 6 * dpr, pad + 24 * dpr, '#ffd24a', 8.5 * dpr, 'left');
+    this.minimap(game);
+  }
+
+  private minimap(game: Game) {
+    const g = this.ctx, dpr = this.dpr, pad = 6 * dpr;
+    const town = game.scene === 'town';
+    const w = 44 * dpr, h = town ? w * TOWN.h / TOWN.w : w * ARENA_H / ARENA_W;
+    const x = this.W - pad - w, y = (town ? 44 : 56) * dpr + (town ? 0 : 0);
+    const mx = (v: number) => x + (v / (town ? TOWN.w : ARENA_W)) * w, my = (v: number) => y + (v / (town ? TOWN.h : ARENA_H)) * h;
+    g.globalAlpha = 0.85; g.fillStyle = 'rgba(14,8,22,0.8)'; g.fillRect(x - 1, y - 1, w + 2, h + 2);
+    g.fillStyle = town ? '#3a5a30' : (MAP_BY_ID[game.save.mapId].theme.floor); g.fillRect(x, y, w, h);
+    const dot = (px: number, py: number, r: number, c: string) => { g.fillStyle = c; g.fillRect(px - r, py - r, r * 2, r * 2); };
+    if (town) {
+      g.fillStyle = '#8a8478'; g.fillRect(mx(7), y, mx(13) - mx(7), h);
+      for (const b of TOWN.buildings) { g.fillStyle = b.roof; g.fillRect(mx(b.x), my(b.y), (b.w / TOWN.w) * w, (b.h / TOWN.h) * h); }
+      for (const wk of game.town.walkers) dot(mx(wk.x), my(wk.y), 0.6 * dpr, wk.kind === 'cat' ? '#e0a060' : '#bbb');
+      const p = game.town.player; dot(mx(p.x), my(p.y), (1.2 + (Date.now() % 800 < 400 ? 0.5 : 0)) * dpr, '#ffffff');
+      if (game.town.dest && p.path.length) dot(mx(game.town.dest.x), my(game.town.dest.y), 1 * dpr, '#ffe040');
+    } else {
+      const b = game.battle;
+      for (const a of b.actors) {
+        if (a.dead) continue;
+        const boss = a.mob?.boss;
+        dot(mx(a.x), my(a.y), (boss ? 2.2 : a.isPlayer ? 1.6 : 1.1) * dpr, a.team === 1 ? (boss ? '#ff2060' : a.variant === 'e' ? '#ffb030' : '#ff6a5a') : a.isPlayer ? '#ffffff' : a.summon ? '#60ffc0' : '#6ab0ff');
+      }
+    }
+    g.globalAlpha = 1; g.strokeStyle = 'rgba(255,255,255,0.35)'; g.lineWidth = 1; g.strokeRect(x - 0.5, y - 0.5, w + 1, h + 1);
   }
 
   private X(x: number) { return this.ox + x * 16 * this.S; }
@@ -140,11 +226,15 @@ export class Renderer {
       for (let i = 0; i < 3; i++) { const an = now * 0.008 + i * 2.1; g.fillStyle = '#ffe94d'; g.fillRect(sx + Math.cos(an) * 5 * S - S, top - 2 * S + Math.sin(an) * 1.5 * S, 2 * S, 2 * S); }
     }
     if (a.status.some((s) => s.k === 'taunt')) this.text('!', sx, top - 2 * S, '#ff5050', 12 * dpr);
-    // nome + barras
+    // nome + barras (desenhados depois da iluminação)
+    this.labels.push(() => this.drawLabel(a, b, sx, top, size, sc, dpr));
+  }
+
+  private drawLabel(a: Actor, b: import('../engine/battle').Battle, sx: number, top: number, size: number, sc: number, dpr: number) {
+    const S = this.S;
     const showName = a.team === 0 || a.variant !== 'n' || b.enemies.length <= 4;
     const bw = Math.max(18 * dpr, 12 * S * Math.min(sc, 1.6));
-    let by = top - 5 * dpr;
-    if (a.mob?.boss) { /* chefe tem barra grande no HUD */ }
+    let by = top - 5 * dpr; void size;
     if (a.team === 0 && a.maxMp > 0 && !a.summon) { this.bar(sx - bw / 2, by, bw, 2.5 * dpr, a.mp / a.maxMp, '#3a8cff'); by -= 4 * dpr; }
     this.bar(sx - bw / 2, by, bw, 3 * dpr, a.hp / a.maxHp, a.team === 0 ? '#e83a3a' : a.variant === 'b' ? '#c01060' : a.variant === 'e' ? '#e8a020' : '#d04848');
     if (showName) this.text(a.name + (a.team === 1 ? ` ${a.level}` : ''), sx, by - 5 * dpr, a.team === 0 ? (a.summon ? '#8affc8' : a.isPlayer ? '#ffffff' : '#b8d8ff') : a.variant === 'b' ? '#ff6080' : a.variant === 'e' ? '#ffd060' : '#ffb0a0', 8.5 * dpr);
@@ -230,7 +320,7 @@ export class Renderer {
     this.text(map.name, rx, pad + 8 * dpr, '#ffe9b0', 9.5 * dpr, 'right');
     this.text(ACTIVITY_LABEL[sv.activity] + (sv.activity === 'dungeon' ? ` • Andar ${b.floor}` : ''), rx, pad + 19 * dpr, '#cfc0e8', 8.5 * dpr, 'right');
     this.text(`Ouro ${fmt(sv.gold)}`, rx, pad + 30 * dpr, '#ffd24a', 8.5 * dpr, 'right');
-    this.text(`Poções ${game.bag.hp}/${game.bag.mp}`, rx, pad + 41 * dpr, '#ff9aa0', 8 * dpr, 'right');
+    this.text(`Poções ${game.bag.hp}/${game.bag.mp} · Gemas ${sv.gems}`, rx, pad + 41 * dpr, '#ff9aa0', 8 * dpr, 'right');
     // barra do chefe
     const boss = b.actors.find((a) => a.mob?.boss && !a.dead);
     if (boss) {

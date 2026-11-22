@@ -45,7 +45,7 @@ export interface Mods {
 
 export type IconKey =
   | 'sword' | 'shield' | 'axe' | 'fist' | 'bow' | 'arrows' | 'flame' | 'snow' | 'bolt' | 'cross'
-  | 'heart' | 'skull' | 'drop' | 'star' | 'ring' | 'eye' | 'potion' | 'potionmp' | 'wings' | 'bone' | 'wave';
+  | 'scroll' | 'anvil' | 'coin' | 'gem' | 'heart' | 'skull' | 'drop' | 'star' | 'ring' | 'eye' | 'potion' | 'potionmp' | 'wings' | 'bone' | 'wave';
 
 export type StatusKind = 'stun' | 'slow' | 'freeze' | 'burn' | 'poison' | 'bleed' | 'vuln' | 'taunt';
 export type Vfx =
@@ -131,4 +131,6 @@ export const SLOT_LABEL: Record<Slot, string> = {
 };
 export interface Item {
   id: string; name: string; slot: Slot; rarity: Rarity; ilvl: number; mods: Mods;
+  plus?: number; // nível de melhoria (+0 a +10)
+  dur?: number;  // durabilidade 0-100 (padrão 100)
 }

@@ -12,7 +12,7 @@ const hex = (c: string): [number, number, number] => { const n = parseInt(c.repl
 export const shade = (c: string, k: number) => { const a = hex(c); const t = k < 0 ? 0 : 255, f = Math.abs(k); return `rgb(${Math.round(a[0] + (t - a[0]) * f)},${Math.round(a[1] + (t - a[1]) * f)},${Math.round(a[2] + (t - a[2]) * f)})`; };
 
 /** Contorno automático: pixels transparentes vizinhos de opacos viram contorno escuro. */
-function outline(c: HTMLCanvasElement) {
+export function outline(c: HTMLCanvasElement) {
   const g = c.getContext('2d')!; const w = c.width, h = c.height;
   const d = g.getImageData(0, 0, w, h); const src = new Uint8ClampedArray(d.data);
   const op = (x: number, y: number) => x >= 0 && y >= 0 && x < w && y < h && src[(y * w + x) * 4 + 3] > 0;
@@ -68,6 +68,11 @@ export function spriteFor(key: string, color: string): HTMLCanvasElement {
   outline(c);
   cache.set(id, c);
   return c;
+}
+/** Humanoide genérico (NPCs) a partir de uma configuração de sprite. */
+export function humanFromCfg(key: string, cfg: SpriteCfg): HTMLCanvasElement {
+  const id = 'npc:' + key; let c = cache.get(id); if (c) return c;
+  c = mk(); human(c.getContext('2d')!, cfg); outline(c); cache.set(id, c); return c;
 }
 /** Versão totalmente branca (flash de dano). */
 export function whiteOf(src: HTMLCanvasElement, id: string): HTMLCanvasElement {
