@@ -1,0 +1,21 @@
+import { CLASSES } from '../data/classes';
+import { MOBS } from '../data/mobs';
+import { ACTIVITIES } from '../data/types';
+import { runBalance, simulate } from './sim';
+
+const lv = Number(process.argv[2] ?? 40);
+const secs = Number(process.argv[3] ?? 60);
+const t0 = Date.now();
+const r = runBalance(lv, secs);
+console.log(`Nível ${lv}, ${secs}s por cenário, ${(Date.now() - t0) / 1000}s de CPU`);
+const pad = (s: string, n: number) => s.padEnd(n).slice(0, n);
+console.log('\nXP/min médio por atividade');
+console.log(pad('', 12) + CLASSES.map((c) => pad(c.id, 11)).join(''));
+for (const a of ACTIVITIES) console.log(pad(a, 12) + CLASSES.map((c) => pad(Math.round(r.perActivity[a][c.id]).toString(), 11)).join(''));
+console.log('\nCenários (atividade:mob) → ranking');
+for (const key in r.rank) console.log(pad(key, 18) + r.rank[key].map((c, i) => pad(c + ':' + Math.round(r.cells[key][c].xpMin), 18)).join(''));
+console.log('\nTop2 / Último / Vitórias');
+for (const c of CLASSES) console.log(pad(c.id, 12), r.stats[c.id]);
+console.log('REGRA OK?', r.ok);
+console.log('\nDuelo solo por mob (dps/ttk/dmgTaken%/mortes):');
+for (const m of MOBS) console.log(pad(m.id, 10) + CLASSES.map((c) => { const s = simulate({ classId: c.id, level: lv, activity: 'solo', mobId: m.id, seconds: secs }); return pad(`${Math.round(s.dps)}/${s.ttk.toFixed(1)}/${(s.dmgTakenFrac * 100).toFixed(0)}%/${s.deaths}d`, 20); }).join(''));
