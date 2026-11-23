@@ -19,6 +19,9 @@ class AudioEngine {
   private note = 2;
 
   unlock() {
+    try { this.unlock_(); } catch (e) { console.warn('áudio indisponível', e); }
+  }
+  private unlock_() {
     if (!this.ctx) {
       try { const AC = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext; this.ctx = new AC(); } catch { return; }
       this.master = this.ctx.createGain(); this.master.gain.value = this.enabled ? 0.8 : 0; this.master.connect(this.ctx.destination);
@@ -31,9 +34,7 @@ class AudioEngine {
     if (this.ctx) { this.master.gain.setTargetAtTime(on ? 0.8 : 0, this.ctx.currentTime, 0.15); }
   }
   setScene(id: string) {
-    if (id === this.scene) return;
-    this.scene = id; this.stop();
-    if (this.ctx) this.start();
+    try { if (id === this.scene) return; this.scene = id; this.stop(); if (this.ctx) this.start(); } catch (e) { console.warn('áudio indisponível', e); }
   }
   private stop() {
     this.timers.forEach((t) => clearTimeout(t)); this.timers = [];
@@ -70,6 +71,9 @@ class AudioEngine {
   private beatN = 0;
   /** Efeitos sonoros curtos (síntese). */
   sfx(name: string) {
+    try { this.sfx_(name); } catch { /* áudio opcional */ }
+  }
+  private sfx_(name: string) {
     if (!this.ctx || !this.enabled) return;
     const seq: Record<string, [number, number, number, OscillatorType][]> = {
       crit: [[660, 0.06, 0.05, 'square'], [990, 0.09, 0.05, 'square']],

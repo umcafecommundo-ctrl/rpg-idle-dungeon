@@ -17,7 +17,7 @@ export const doneOnboard = (): Onboard => ({ hints: ['start', 'skill', 'potion',
 export interface SaveData {
   v: 1; ts: number; active: string; chars: Record<string, CharSave>;
   gold: number; inventory: Item[]; potions: { hp: number; mp: number };
-  settings: { autoPot: boolean; hpTh: number; mpTh: number; autoSell: 'none' | 'comum' | 'raro'; sound: boolean };
+  settings: { autoPot: boolean; hpTh: number; mpTh: number; autoSell: 'none' | 'comum' | 'raro'; sound: boolean; ai: boolean };
   gems: number; cons: Record<string, number>; boosts: Record<string, number>;
   shop: { win: number; bought: string[] }; inTown: boolean;
   onboard: Onboard;
@@ -33,7 +33,7 @@ export const newChar = (): CharSave => ({ level: 1, xp: 0, alloc: zeroStats(), a
 export function newSave(classId: string): SaveData {
   return {
     v: 1, ts: Date.now(), active: classId, chars: { [classId]: newChar() }, gold: 100, inventory: [], potions: { hp: 5, mp: 3 },
-    settings: { autoPot: true, hpTh: 0.4, mpTh: 0.25, autoSell: 'comum', sound: true },
+    settings: { autoPot: true, hpTh: 0.4, mpTh: 0.25, autoSell: 'comum', sound: true, ai: true },
     gems: 0, cons: {}, boosts: {}, shop: { win: 0, bought: [] }, inTown: false, onboard: newOnboard(),
     mapId: 'esgoto', activity: 'solo', floor: 1, bestFloor: {}, rebirths: 0, mercs: ['cavaleiro', 'clerigo', 'mago'],
     stats: { kills: 0, deaths: 0, bosses: 0, items: 0 },

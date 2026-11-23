@@ -69,7 +69,8 @@ export function SettingsPanel() {
         {msg && <div className="muted small">{msg}</div>}
       </div>
       <div className="card">
-        <label className="row check"><input type="checkbox" checked={g.debugAi} onChange={(e) => g.setDebugAi(e.target.checked)} /> <b>Debug da IA</b> (heatmap, caminho, alcance)</label>
+        <label className="row check"><input type="checkbox" checked={st.ai} onChange={(e) => g.setSettings({ ai: e.target.checked })} /> <b>IA de posicionamento</b> (kiting, anti-encurralamento)</label>
+        <label className="row check"><input type="checkbox" checked={g.debugAi} onChange={(e) => g.setDebugAi(e.target.checked)} /> Mostrar debug da IA (heatmap, caminho, alcance)</label>
         {g.debugAi && <AiTuner />}
       </div>
       <div className="card">

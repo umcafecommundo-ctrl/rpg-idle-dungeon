@@ -81,13 +81,16 @@ function ClassSelect() {
 function Main() {
   const g = useGame();
   const [tab, setTab] = useState<Tab | null>(null);
+  // ao viajar/trocar de cena, fecha painéis abertos para mostrar a tela de carregamento e o novo mapa
+  const phase = g.transition?.phase;
+  useEffect(() => { if (phase === 'out') { setTab(null); game.service = null; } }, [phase]);
   return (
     <div className="app" data-hint={g.activeHint?.h.target ?? ''}>
       <div className="arena">
         <CombatCanvas />
         {!g.vision && !tab && !g.service && <button className="gear" aria-label="Configurações" onClick={() => setTab('cfg')}>⚙</button>}
         {!g.vision && !tab && !g.service && g.scene === 'field' && <button className="homebtn" onClick={() => game.goTown()}>🏠 Voltar à cidade</button>}
-        {!g.vision && !tab && !g.service && g.scene === 'field' && <button className={'aibtn' + (g.debugAi ? ' on' : '')} onClick={() => game.setDebugAi(!game.debugAi)}>IA</button>}
+        {!g.vision && !tab && !g.service && g.scene === 'field' && <button className={'aibtn' + (g.save.settings.ai ? ' on' : '')} onClick={() => game.setSettings({ ai: !g.save.settings.ai })}>IA {g.save.settings.ai ? '✓' : '✗'}</button>}
         {g.vision && (
           <div className="vision" onClick={() => game.endVision()}>
             <div className="bars top" /><div className="bars bot" />
@@ -141,11 +144,13 @@ function CombatCanvas() {
     let raf = 0, last = performance.now();
     const loop = (now: number) => {
       const dt = (now - last) / 1000; last = now;
-      game.update(dt);
-      if (game.has) {
-        if (game.scene === 'town' && game.town.arrived && !game.service) { const id = game.town.arrived; game.town.arrived = null; game.openService(id); }
-        r.draw(game, now);
-      }
+      try {
+        game.update(dt);
+        if (game.has) {
+          if (game.scene === 'town' && game.town.arrived && !game.service) { const id = game.town.arrived; game.town.arrived = null; game.openService(id); }
+          r.draw(game, now);
+        }
+      } catch (e) { console.error(e); }
       raf = requestAnimationFrame(loop);
     };
     raf = requestAnimationFrame(loop);

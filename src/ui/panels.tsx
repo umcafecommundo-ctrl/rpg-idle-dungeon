@@ -180,6 +180,7 @@ export function InventoryPanel() {
             <button className="btn small danger" onClick={() => { g.sell(it.id); setSel(null); }}>Vender ({fmt(sellValue(it))})</button></div>
         </ItemCard>
       )}
+      <button className="btn" onClick={() => g.equipBest()}>⚔ Equipar melhores itens</button>
       <div className="row"><b>Mochila {inv.length}/{MAX_INV}</b><span className="grow" />
         <button className="btn small" onClick={() => g.sellBelow('comum')}>Vender comuns</button>
         <button className="btn small" onClick={() => g.sellBelow('raro')}>Vender até raros</button></div>

@@ -62,7 +62,7 @@ export class Game {
   init() {
     const s = loadSave();
     if (s) {
-      this.save = s;
+      this.save = s; Battle.AI = s.settings.ai !== false;
       this.refreshDerived();
       this.startBattle();
       this.scene = s.inTown ? 'town' : 'field';
@@ -199,7 +199,7 @@ export class Game {
   private runTransition(title: string, sub: string, fn: () => void) {
     if (this.transition) return;
     this.transition = { title, sub, phase: 'out' }; this.emit();
-    setTimeout(() => { fn(); this.transition = { title, sub, phase: 'hold' }; this.emit(); }, 330);
+    setTimeout(() => { try { fn(); } catch (e) { console.error(e); } this.transition = { title, sub, phase: 'hold' }; this.emit(); }, 330);
     setTimeout(() => { if (this.transition) { this.transition.phase = 'in'; this.emit(); } }, 1250);
     setTimeout(() => { this.transition = null; this.emit(); }, 1700);
   }
@@ -476,6 +476,24 @@ export class Game {
     if (old) this.save.inventory.push(old);
     this.refreshDerived(); this.persist(); this.emit();
   }
+  /** Equipa, em cada slot, o item da mochila com a melhor pontuação (considera +N e durabilidade). */
+  equipBest(): number {
+    const score = (it: Item) => itemScore({ ...it, mods: effMods(it) });
+    let n = 0;
+    for (const slot of SLOTS) {
+      let best: Item | undefined = this.char.equipped[slot];
+      for (const it of this.save.inventory) if (it.slot === slot && (!best || score(it) > score(best) * 1.0001)) best = it;
+      const cur = this.char.equipped[slot];
+      if (best && best !== cur) {
+        this.save.inventory = this.save.inventory.filter((x) => x !== best);
+        if (cur) this.save.inventory.push(cur);
+        this.char.equipped[slot] = best; n++;
+      }
+    }
+    if (n) { this.refreshDerived(); this.persist(); this.toast(`${n} ite${n > 1 ? 'ns equipados' : 'm equipado'}`, '#9f9'); }
+    else this.toast('Você já está com os melhores itens', '#9ad0ff');
+    this.emit(); return n;
+  }
   unequip(slot: Slot) {
     const it = this.char.equipped[slot]; if (!it || this.save.inventory.length >= MAX_INV) return;
     delete this.char.equipped[slot]; this.save.inventory.push(it);
@@ -574,7 +592,7 @@ export class Game {
     if (this.save.inventory.length >= MAX_INV) { this.save.gold += sellValue(it); this.emit(); return it; }
     this.save.inventory.push(it); this.emit(); return it;
   }
-  setSettings(p: Partial<SaveData['settings']>) { Object.assign(this.save.settings, p); audio.setEnabled(this.save.settings.sound); this.refreshDerived(); this.emit(); }
+  setSettings(p: Partial<SaveData['settings']>) { Object.assign(this.save.settings, p); Battle.AI = this.save.settings.ai !== false; audio.setEnabled(this.save.settings.sound); this.refreshDerived(); this.emit(); }
 
   // ───────────── offline ─────────────
   applyOffline(elapsed: number) {
