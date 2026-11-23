@@ -53,13 +53,45 @@ export function blocked(obs: Obstacle[], ax: number, ay: number, bx: number, by:
   return false;
 }
 
+/** Corredor livre a partir de (x,y) na direção (dx,dy), até `max` tiles. */
+export function runway(obs: Obstacle[], x: number, y: number, dx: number, dy: number, max = 6) {
+  const l = Math.hypot(dx, dy) || 1; dx /= l; dy /= l;
+  for (let d = 0.5; d <= max; d += 0.5) if (!freeAt(obs, x + dx * d, y + dy * d, 0.25)) return d - 0.5;
+  return max;
+}
+const VIS = new Int32Array(AW * AH); let visTok = 0;
+/** Máscara de tiles bloqueados por ameaças corpo a corpo (calculada uma vez por reavaliação). */
+export function threatMask(threats: { x: number; y: number; melee: boolean }[]): Uint8Array {
+  const m = new Uint8Array(AW * AH);
+  for (const e of threats) if (e.melee) for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) { const tx = tileOf(e.x) + dx, ty = tileOfY(e.y) + dy; if (tx >= 0 && ty >= 0 && tx < AW && ty < AH) m[K(tx, ty)] = 1; }
+  return m;
+}
+/** Quantos tiles livres são alcançáveis (BFS curto) a partir de (x,y) sem passar perto das ameaças. */
+export function reachArea(map: AiMap, x: number, y: number, mask: Uint8Array, depth = 3): number {
+  visTok++; const q: number[] = [K(tileOf(x), tileOfY(y))]; VIS[q[0]] = visTok; let n = 1;
+  let head = 0, end = q.length;
+  for (let d = 0; d < depth; d++) {
+    for (; head < end; head++) {
+      const c = q[head]; const cx = c % AW, cy = (c / AW) | 0;
+      for (let k = 0; k < 4; k++) {
+        const nx = cx + (k === 0 ? 1 : k === 1 ? -1 : 0), ny = cy + (k === 2 ? 1 : k === 3 ? -1 : 0);
+        if (nx < 0 || ny < 0 || nx >= AW || ny >= AH) continue;
+        const i = K(nx, ny); if (VIS[i] === visTok || !map.free[i] || mask[i]) continue;
+        VIS[i] = visTok; q.push(i); n++;
+      }
+    }
+    end = q.length;
+  }
+  return n;
+}
+
 export interface Threat { x: number; y: number; vx: number; vy: number; range: number; spd: number; melee: boolean; stomp?: boolean }
 export interface ScoreCtx {
   cfg: AiCfg; w: AiWeights; map: AiMap; ax: number; ay: number; tgt: { x: number; y: number } | null; range: number;
-  threats: Threat[]; zones: { x: number; y: number; r: number }[]; cx: number; cy: number; emergency: boolean;
+  threats: Threat[]; mask: Uint8Array; zones: { x: number; y: number; r: number }[]; cx: number; cy: number; emergency: boolean;
 }
 
-export function scorePos(c: ScoreCtx, x: number, y: number): number {
+export function scorePos(c: ScoreCtx, x: number, y: number, deep = true): number {
   const { cfg, w, map } = c; let s = 0;
   if (c.tgt) {
     const d = Math.hypot(x - c.tgt.x, y - c.tgt.y);
@@ -89,6 +121,13 @@ export function scorePos(c: ScoreCtx, x: number, y: number): number {
   s -= w.center * Math.hypot(x - c.cx, y - c.cy);
   const mv = Math.hypot(x - c.ax, y - c.ay);
   s -= w.move * mv; if (mv < 0.6) s += w.stay;
+  if (tn && deep) { // antecipação: corredor livre ao fugir + área alcançável (evita ir para canto/beco antes de o perigo chegar)
+    const awx = x - tcx / tn, awy = y - tcy / tn;
+    const rw = runway(map.obstacles, x, y, awx, awy, 6);
+    s -= w.runway * Math.max(0, 3.5 - rw);
+    const area = reachArea(map, x, y, c.mask, 3);
+    s += w.area * Math.min(1, area / 20) - (area < 7 ? w.area * 2 : 0);
+  }
   if (tn && mv > 0.5) { // arco: prefere movimento tangente à direção da ameaça
     const tx = tcx / tn - c.ax, ty = tcy / tn - c.ay, tl = Math.hypot(tx, ty) || 1, vx = (x - c.ax) / mv, vy = (y - c.ay) / mv;
     s += w.arc * Math.abs((vx * ty - vy * tx) / tl);

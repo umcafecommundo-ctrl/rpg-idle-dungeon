@@ -39,7 +39,18 @@ export const MINIBOSSES: MobDef[] = [
   { id: 'rato_albino', name: 'Rato Albino', kind: 'fera', hp: 3.6, atk: 1.2, def: 1, spd: 2.3, interval: 1.1, range: 1.4, dmg: 'fisico', xp: 7, gold: 6, sprite: 'rato', color: '#f0d8e0', boss: true, mechs: ['enrage'], scale: 1.7 },
 ];
 
-export const MOB_BY_ID: Record<string, MobDef> = Object.fromEntries([...MOBS, ...BOSSES, ...MINIBOSSES].map((m) => [m.id, m]));
+/** Chefes errantes (um por mapa) — ver events.json. */
+export const WANDERERS: MobDef[] = [
+  { id: 'gosma_rainha', name: 'Gosma Rainha', kind: 'elemental', hp: 8, atk: 1.4, def: 1, spd: 1.2, interval: 1.5, range: 1.6, dmg: 'veneno', xp: 12, gold: 10, res: { veneno: 0, fisico: 0.5, fogo: 1.4 }, regen: 0.01, sprite: 'slime', color: '#a0ff70', boss: true, mechs: ['adds', 'enrage'], scale: 2.4 },
+  { id: 'ogro_ancião', name: 'Ogro Ancião', kind: 'humanoide', hp: 10, atk: 1.7, def: 1.4, spd: 1.4, interval: 1.9, range: 1.8, dmg: 'fisico', xp: 14, gold: 12, sprite: 'golem', color: '#7a9a50', boss: true, mechs: ['stomp', 'enrage'], scale: 2.4 },
+  { id: 'cavaleiro_morto', name: 'Cavaleiro Morto', kind: 'morto', hp: 11, atk: 1.8, def: 2, spd: 1.6, interval: 1.4, range: 1.6, dmg: 'sombrio', xp: 15, gold: 13, sprite: 'esqueleto', color: '#8aa0d0', boss: true, mechs: ['enrage', 'stomp'], scale: 2.3 },
+  { id: 'sentinela_rubra', name: 'Sentinela Rubra', kind: 'construto', hp: 13, atk: 1.8, def: 3, spd: 1.1, interval: 2, range: 1.8, dmg: 'fisico', xp: 16, gold: 14, sprite: 'golem', color: '#d86a4a', boss: true, mechs: ['stomp', 'enrage'], scale: 2.5 },
+  { id: 'salamandra', name: 'Salamandra Anciã', kind: 'elemental', hp: 12, atk: 1.9, def: 1.4, spd: 1.6, interval: 1.6, range: 4, dmg: 'fogo', xp: 17, gold: 14, res: { fogo: 0, gelo: 1.6 }, sprite: 'elemental', color: '#ffa020', boss: true, mechs: ['stomp', 'enrage'], scale: 2.4 },
+  { id: 'arauto', name: 'Arauto Infernal', kind: 'demonio', hp: 13, atk: 2, def: 1.6, spd: 1.9, interval: 1.5, range: 4.5, dmg: 'fogo', xp: 18, gold: 16, sprite: 'imp', color: '#c01848', boss: true, mechs: ['adds', 'enrage'], scale: 2.4 },
+  { id: 'devorador', name: 'Devorador', kind: 'construto', hp: 15, atk: 2.1, def: 3, spd: 1.3, interval: 2, range: 2, dmg: 'sombrio', xp: 20, gold: 18, sprite: 'golem', color: '#7a50c0', boss: true, mechs: ['stomp', 'enrage', 'adds'], scale: 2.6 },
+];
+
+export const MOB_BY_ID: Record<string, MobDef> = Object.fromEntries([...MOBS, ...BOSSES, ...MINIBOSSES, ...WANDERERS].map((m) => [m.id, m]));
 
 export function resistOf(m: MobDef): Partial<Record<DmgType, number>> {
   return { ...KIND_RES[m.kind], ...(m.res ?? {}) };

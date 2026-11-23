@@ -1,0 +1,79 @@
+{
+  "goldenMob": { "chance": 0.01, "minLevel": 3, "lifetime": 14, "fleeSpeed": 3.4, "goldMult": 25, "xpMult": 3, "gemChance": 0.2 },
+  "invasion": {
+    "minLevel": 5, "intervalMin": 420, "intervalMax": 780, "firstDelay": 150,
+    "total": 30, "timeLimit": 100, "aliveCap": 10,
+    "reward": { "goldLv": 40, "gems": 1, "xpMult": 8, "item": "tier1" }
+  },
+  "wanderingBoss": {
+    "minLevel": 8, "intervalMin": 900, "intervalMax": 1500, "firstDelay": 420, "durationSec": 600,
+    "byMap": {
+      "esgoto": { "id": "gosma_rainha", "text": "A Gosma Rainha surgiu no Esgoto!" },
+      "floresta": { "id": "ogro_ancião", "text": "Um Ogro Ancião surgiu na Floresta!" },
+      "cripta": { "id": "cavaleiro_morto", "text": "O Cavaleiro Morto ergueu-se na Cripta!" },
+      "deserto": { "id": "sentinela_rubra", "text": "A Sentinela Rubra despertou no Deserto!" },
+      "vulcao": { "id": "salamandra", "text": "A Salamandra Anciã emergiu no Vulcão!" },
+      "castelo": { "id": "arauto", "text": "O Arauto Infernal chegou ao Castelo Demoníaco!" },
+      "abismo": { "id": "devorador", "text": "O Devorador surgiu no Abismo!" }
+    },
+    "reward": { "goldLv": 120, "gems": 2, "item": "tier2" }
+  },
+  "timerChest": { "intervalMin": 30, "firstMin": 15, "maxStack": 4, "reward": { "goldLv": 25, "gems": 0, "itemChance": 0.5 } },
+  "weekend": {
+    "saturday": { "label": "Sábado: XP em dobro!", "xp": 1.0, "drop": 0 },
+    "sunday": { "label": "Domingo: drops em dobro!", "xp": 0, "drop": 1.0 }
+  },
+  "daily": {
+    "missionCount": 4,
+    "pool": [
+      { "id": "kill", "title": "Derrote {n} monstros", "type": "kill", "n": 60, "reward": { "goldLv": 20, "hp": 2 } },
+      { "id": "killKind", "title": "Derrote {n} monstros do tipo {kind}", "type": "killKind", "n": 20, "reward": { "goldLv": 25, "mp": 2 } },
+      { "id": "boss", "title": "Derrote {n} chefes", "type": "boss", "n": 2, "reward": { "gems": 1, "goldLv": 30 } },
+      { "id": "invasion", "title": "Vença uma invasão", "type": "invasion", "n": 1, "reward": { "gems": 1, "goldLv": 30 } },
+      { "id": "levelup", "title": "Suba {n} nível", "type": "levelup", "n": 1, "reward": { "goldLv": 25, "hp": 3 } },
+      { "id": "items", "title": "Encontre {n} itens", "type": "items", "n": 8, "reward": { "goldLv": 20, "cons": { "buff_atk": 1 } } },
+      { "id": "golden", "title": "Pegue um mob dourado", "type": "golden", "n": 1, "reward": { "gems": 2 } }
+    ],
+    "chest": { "goldLv": 80, "gems": 2, "item": "tier1" },
+    "login": [
+      { "day": 1, "text": "Ouro", "reward": { "goldLv": 15 } },
+      { "day": 2, "text": "Poções", "reward": { "hp": 3, "mp": 3 } },
+      { "day": 3, "text": "Elixir de Força", "reward": { "cons": { "buff_atk": 2 } } },
+      { "day": 4, "text": "1 gema + ouro", "reward": { "gems": 1, "goldLv": 20 } },
+      { "day": 5, "text": "Essência da Sorte", "reward": { "cons": { "buff_drop": 2 } } },
+      { "day": 6, "text": "2 gemas", "reward": { "gems": 2 } },
+      { "day": 7, "text": "Grande prêmio: item épico + 5 gemas", "reward": { "gems": 5, "goldLv": 60, "item": "tier2" } }
+    ]
+  },
+  "calendar": [
+    { "when": "A cada 7–13 min", "what": "Invasão de monstros (barra de progresso e recompensa)" },
+    { "when": "A cada 15–25 min", "what": "Chefe errante num mapa aleatório" },
+    { "when": "1% por monstro", "what": "Mob dourado (foge e dropa muito ouro)" },
+    { "when": "Todo dia", "what": "Missões diárias e sequência de login (dias 1–7)" },
+    { "when": "Sábado / Domingo", "what": "XP em dobro / drops em dobro" },
+    { "when": "A cada 30 min", "what": "Baú do cristal com timer" },
+    { "when": "Em breve", "what": "Chefe mundial semanal, eventos sazonais e passe de temporada" }
+  ],
+  "achievements": [
+    { "id": "kills1", "title": "Caçador", "desc": "Derrote 100 monstros", "stat": "kills", "n": 100, "mods": { "atkPct": 0.01 } },
+    { "id": "kills2", "title": "Exterminador", "desc": "Derrote 1.000 monstros", "stat": "kills", "n": 1000, "mods": { "atkPct": 0.02 } },
+    { "id": "kills3", "title": "Flagelo das Masmorras", "desc": "Derrote 10.000 monstros", "stat": "kills", "n": 10000, "mods": { "atkPct": 0.03 } },
+    { "id": "lv10", "title": "Aprendiz", "desc": "Alcance o nível 10", "stat": "level", "n": 10, "mods": { "hpPct": 0.01 } },
+    { "id": "lv25", "title": "Veterano", "desc": "Alcance o nível 25", "stat": "level", "n": 25, "mods": { "hpPct": 0.02 } },
+    { "id": "lv50", "title": "Campeão", "desc": "Alcance o nível 50", "stat": "level", "n": 50, "mods": { "hpPct": 0.03 } },
+    { "id": "lv100", "title": "Lenda Viva", "desc": "Alcance o nível 100", "stat": "level", "n": 100, "mods": { "hpPct": 0.04, "atkPct": 0.02 } },
+    { "id": "boss1", "title": "Matador de Chefes", "desc": "Derrote 5 chefes", "stat": "bosses", "n": 5, "mods": { "bossDmg": 0.02 } },
+    { "id": "boss2", "title": "Terror dos Chefes", "desc": "Derrote 50 chefes", "stat": "bosses", "n": 50, "mods": { "bossDmg": 0.04 } },
+    { "id": "gold1", "title": "Colecionador", "desc": "Acumule 100.000 de ouro", "stat": "goldEarned", "n": 100000, "mods": { "goldPct": 0.02 } },
+    { "id": "gold2", "title": "Magnata", "desc": "Acumule 10.000.000 de ouro", "stat": "goldEarned", "n": 10000000, "mods": { "goldPct": 0.04 } },
+    { "id": "item1", "title": "Garimpeiro", "desc": "Encontre 100 itens", "stat": "items", "n": 100, "mods": { "dropPct": 0.03 } },
+    { "id": "gold_mob", "title": "Faro de Ouro", "desc": "Pegue 3 mobs dourados", "stat": "golden", "n": 3, "mods": { "goldPct": 0.03 } },
+    { "id": "inv1", "title": "Defensor", "desc": "Vença 5 invasões", "stat": "invasions", "n": 5, "mods": { "defPct": 0.02 } },
+    { "id": "wand1", "title": "Rastreador", "desc": "Derrote 3 chefes errantes", "stat": "wanderers", "n": 3, "mods": { "xpPct": 0.03 } },
+    { "id": "daily1", "title": "Dedicado", "desc": "Complete 20 missões diárias", "stat": "dailyDone", "n": 20, "mods": { "xpPct": 0.02 } },
+    { "id": "bes1", "title": "Naturalista", "desc": "Complete 3 registros do bestiário", "stat": "bestiary", "n": 3, "mods": { "atkPct": 0.01 } },
+    { "id": "bes2", "title": "Enciclopédia Viva", "desc": "Complete 10 registros do bestiário", "stat": "bestiary", "n": 10, "mods": { "atkPct": 0.03 } },
+    { "id": "death1", "title": "Teimoso", "desc": "Morra 10 vezes e continue", "stat": "deaths", "n": 10, "mods": { "regen": 0.002 } }
+  ],
+  "bestiary": { "completeKills": 50, "completeKillsBoss": 5, "bonusPerEntry": 0.03, "bonusPerBoss": 0.02 }
+}

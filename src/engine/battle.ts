@@ -1,13 +1,13 @@
 // Motor de combate determinístico (tick fixo). Usado pelo jogo, pela simulação offline e pela tela de balanceamento.
 import { MAP_BY_ID } from '../data/maps';
 import { BOSSES, MOB_BY_ID, resistOf } from '../data/mobs';
-import type { Activity, DmgType, IconKey, MobDef, MobKind, Mods, Skill, StatusKind, Stat, Vfx } from '../data/types';
+import type { Activity, DmgType, IconKey, Maneuver, MobDef, MobKind, Mods, Skill, StatusKind, Stat, Vfx } from '../data/types';
 import { STATS } from '../data/types';
 import type { Derived } from './formulas';
 import { addMods, defK, killsPerLevel, refAtk, refDef, refHp, skillMpCost, TICK, xpLevelFactor, xpToNext } from './formulas';
 import { pickW, type Rng } from './rng';
 import { AI_STEP, CLASS_AI, type AiCfg } from '../data/ai';
-import { astar, buildAiMap, freeAt, inBounds, openAt, routesAt, scorePos, blocked as losBlocked, type AiMap, type Threat, type ScoreCtx } from './ai';
+import { astar, threatMask, buildAiMap, freeAt, inBounds, openAt, routesAt, scorePos, blocked as losBlocked, type AiMap, type Threat, type ScoreCtx } from './ai';
 import type { Layout } from '../render/mapgen';
 
 export const ARENA_W = 12;
@@ -37,9 +37,11 @@ export interface Actor {
   regenMob: number; nextAdd: number; stompAt: number; nextStomp: number; enraged: boolean; reflect: number;
   homeX: number; homeY: number; target: number;
   // IA de posicionamento
+  golden?: { until: number }; inv?: boolean;
+  maneuver?: Maneuver; dash?: { x0: number; y0: number; tx: number; ty: number; t: number; dur: number; kind: 'dash' | 'jump' }; air: number; kbx: number; kby: number;
   aiNext: number; kiteSince: number; standUntil: number; tgtUntil: number; dashCd: number; vx: number; vy: number; lx: number; ly: number; lt: number;
   aiEmergency?: boolean;
-  ai?: { nm: number; mode: 'engage' | 'kite'; path: { x: number; y: number }[]; cornered: boolean; emergency: boolean };
+  ai?: { nm: number; mode: 'engage' | 'kite' | 'besieged'; path: { x: number; y: number }[]; cornered: boolean; emergency: boolean };
   dbg?: AiDebug;
 }
 export interface AiDebug { cands: [number, number, number][]; dest: { x: number; y: number } | null; path: { x: number; y: number }[]; mode: string; emergency: boolean; cornered: boolean; threats: { x: number; y: number; melee: boolean }[]; ideal: number; safe: number; range: number; hp: number; dashIn: number; note: string }
@@ -53,6 +55,7 @@ export interface BattleCfg {
   party: PartyMember[];
   poolOverride?: string[]; bossOverride?: MobDef;
   fx: boolean; bag?: Bag;
+  golden?: { chance: number; lifetime: number; fleeSpeed: number; goldMult: number; xpMult: number };
   xpBonus: number; goldBonus: number; dropBonus: number;
 }
 
@@ -86,6 +89,9 @@ export class Battle {
   layout: Layout | null = null;
   static AI = true;           // liga/desliga a IA de posicionamento (comparações de balanceamento)
   debug = false;              // guarda dados de depuração da IA
+  aiLog: { t: number; text: string }[] = [];
+  invasion: { total: number; spawned: number; killed: number; t: number; done: boolean; failed: boolean } | null = null;
+  private actOv: Activity | null = null; private invSpawnT = 0;
   private _map: AiMap | null = null;
   get aiMap(): AiMap { return this._map ??= buildAiMap(this.layout?.obstacles ?? []); }
 
@@ -106,7 +112,7 @@ export class Battle {
       gcd: 0, nextAtk: 0, status: [], buffs: [], res: {}, flying: false, slowKind: false, isPlayer: false, summon: false,
       dead: false, deadAt: 0, flash: 0, atkAnim: 0, castAnim: 0, sprite: '', color: '#fff', scale: 1, variant: 'n',
       mobXp: 0, mobGold: 0, isAdd: false, regenMob: 0, nextAdd: 0, stompAt: -1, nextStomp: 0, enraged: false, reflect: 0,
-      homeX: 6, homeY: 11, target: 0, aiNext: 0, kiteSince: -1, standUntil: 0, tgtUntil: 0, dashCd: 0, vx: 0, vy: 0, lx: 0, ly: 0, lt: -9,
+      homeX: 6, homeY: 11, target: 0, air: 0, kbx: 0, kby: 0, aiNext: 0, kiteSince: -1, standUntil: 0, tgtUntil: 0, dashCd: 0, vx: 0, vy: 0, lx: 0, ly: 0, lt: -9,
     };
   }
 
@@ -129,6 +135,7 @@ export class Battle {
     a.defRaw = d.def / (1 + (d.mods.defPct ?? 0)); a.mdefRaw = d.mdef / (1 + (d.mods.defPct ?? 0)); a.wAtk = d.wAtk;
     a.baseInterval = d.cls.basic.interval; a.range = d.rangeTiles; a.spd = d.moveSpd; a.basic = d.cls.basic;
     a.skills = d.cls.skills.filter((s) => s.lv <= d.level); a.auto = auto;
+    a.maneuver = d.level >= d.cls.maneuver.lv ? d.cls.maneuver : undefined;
     this.recalc(a);
   }
 
@@ -230,6 +237,8 @@ export class Battle {
     if (t.team === 1) {
       this.acc.kills++;
       if (t.mob && !t.isAdd) this.killLog.push(t.mob.id);
+      if (t.golden) { this.killLog.push('__golden__'); this.sfx.push('drop_epico'); this.addFx('spark', t.x, t.y, 0, 0, 1, '#ffd040', 2); }
+      if (t.inv && this.invasion) this.invasion.killed++;
       const lv = t.level;
       const xp = t.mobXp * xpLevelFactor(this.playerLevel, lv) * (1 + this.cfg.xpBonus);
       this.acc.xp += xp; this.acc.gold += t.mobGold * (1 + this.cfg.goldBonus);
@@ -263,7 +272,7 @@ export class Battle {
   }
 
   makeMob(def: MobDef, level: number, variant: 'n' | 'e' | 'b', x: number, y: number, isAdd = false): Actor {
-    const act = ACT[this.cfg.activity];
+    const act = ACT[this.actOv ?? this.cfg.activity];
     const fs = this.cfg.activity === 'dungeon' ? 1 + 0.05 * (this.floor - 1) : 1;
     const a = this.blank(1, def.name, level);
     const hpm = def.boss ? def.hp * (this.cfg.activity === 'party' ? 1.9 : 1) : def.hp * act.hp * (variant === 'e' ? 2 : 1) * (isAdd ? 0.5 : 1);
@@ -295,13 +304,46 @@ export class Battle {
     return a;
   }
 
+  private spawnRandomInv() {
+    const map = MAP_BY_ID[this.cfg.mapId];
+    const def = MOB_BY_ID[pickW(this.rng, map.mobs).id];
+    return this.makeMob(def, this.mobLevel(), 'n', 0.8 + this.rng() * (ARENA_W - 1.6), 2.4 + this.rng() * 1.2);
+  }
+  startInvasion(total: number, timeLimit: number) {
+    this.invasion = { total, spawned: 0, killed: 0, t: timeLimit, done: false, failed: false }; this.invSpawnT = 0.5;
+    this.banner = 'INVASÃO! Derrote todos os invasores!'; this.bannerT = 3; this.sfx.push('boss');
+  }
   private spawnRandom() {
     const map = MAP_BY_ID[this.cfg.mapId];
     const pool = this.cfg.poolOverride ? this.cfg.poolOverride.map((id) => ({ id, w: 1 })) : map.mobs;
     const def = MOB_BY_ID[pickW(this.rng, pool).id];
     const act = ACT[this.cfg.activity];
     const variant = this.rng() < act.elite ? 'e' : 'n';
+    const gm = this.cfg.golden;
+    if (gm && !this.actors.some((a) => a.golden && !a.dead) && this.rng() < gm.chance) return this.spawnGolden(def);
     return this.makeMob(def, this.mobLevel(), variant, 1.2 + this.rng() * (ARENA_W - 2.4), 2.6 + this.rng() * 1.8);
+  }
+
+  private spawnGolden(def: MobDef): Actor {
+    const gm = this.cfg.golden!;
+    const a = this.makeMob(def, this.mobLevel(), 'n', 1.5 + this.rng() * (ARENA_W - 3), 2.6 + this.rng() * 1.5);
+    a.golden = { until: this.t + gm.lifetime }; a.name = `${def.name} Dourado`; a.color = '#ffd040';
+    a.maxHp = a.hp = Math.round(a.maxHp * 0.7); a.mobGold = Math.round(a.mobGold * gm.goldMult); a.mobXp *= gm.xpMult; a.spd = gm.fleeSpeed; a.res = {};
+    this.banner = 'Um mob dourado apareceu! Pegue-o antes que fuja!'; this.bannerT = 2.5; this.sfx.push('boss');
+    return a;
+  }
+  private goldenAct(a: Actor, dt: number) {
+    if (this.t > a.golden!.until) { a.dead = true; a.deadAt = this.t; this.float(a.x, a.y - 0.5, 'Escapou!', '#ffd040'); return; }
+    let near: Actor | null = null, nd = 1e9;
+    for (const e of this.actors) if (e.team === 0 && !e.dead && !e.summon) { const d = this.dist(a, e); if (d < nd) { nd = d; near = e; } }
+    if (!near) return;
+    let dx = a.x - near.x, dy = a.y - near.y; const l = Math.hypot(dx, dy) || 1; dx /= l; dy /= l;
+    // contorna paredes e obstáculos: se o caminho de fuga está bloqueado, desliza pela tangente
+    const step = a.spd * dt * (a.status.some((s) => s.k === 'slow') ? 0.5 : 1);
+    let nx = a.x + dx * step, ny = a.y + dy * step;
+    if (nx < 1 || nx > ARENA_W - 1) { nx = a.x; ny = a.y + (a.y < 8 ? 1 : -1) * step; }
+    if (ny < 2.4 || ny > ARENA_H - 1) { ny = a.y; nx = a.x + (a.x < ARENA_W / 2 ? 1 : -1) * step; }
+    a.x = nx; a.y = ny; a.face = dx >= 0 ? 1 : -1;
   }
 
   private bossDef(): MobDef {
@@ -315,6 +357,18 @@ export class Battle {
       if (def) { this.makeMob(def, Math.max(1, this.playerLevel), 'b', ARENA_W / 2, 3.6); this.banner = `${def.name} apareceu!`; this.bannerT = 2.5; this.sfx.push('boss'); }
     }
     const alive = this.actors.filter((a) => a.team === 1 && !a.dead && !a.isAdd).length;
+    const inv = this.invasion;
+    if (inv && !inv.done) {
+      inv.t -= dt;
+      const invAlive = this.actors.filter((a) => a.inv && !a.dead).length;
+      if (inv.spawned < inv.total && invAlive < 10) {
+        this.invSpawnT -= dt;
+        if (this.invSpawnT <= 0) { this.actOv = 'horda'; const m = this.spawnRandomInv(); this.actOv = null; m.inv = true; inv.spawned++; this.invSpawnT = 0.35; }
+      }
+      if (inv.killed >= inv.total) { inv.done = true; inv.failed = false; this.sfx.push('quest'); }
+      else if (inv.t <= 0) { inv.done = true; inv.failed = true; for (const a of this.actors) if (a.inv && !a.dead) { a.dead = true; a.deadAt = this.t; } }
+      return;
+    }
     if (this.cfg.activity === 'chefe') {
       if (alive === 0) {
         this.spawnT -= dt;
@@ -410,6 +464,7 @@ export class Battle {
   }
 
   private act(a: Actor, dt: number) {
+    if (a.golden) { if (a.flash > 0) a.flash -= dt; if (!a.status.some((x) => x.k === 'stun' || x.k === 'freeze')) this.goldenAct(a, dt); for (const st of a.status) st.t -= dt; a.status = a.status.filter((x) => x.t > 0); return; }
     if (a.flash > 0) a.flash -= dt;
     if (a.atkAnim > 0) a.atkAnim -= dt;
     if (a.castAnim > 0) a.castAnim -= dt;
@@ -447,6 +502,7 @@ export class Battle {
       if (ch) { a.buffs = a.buffs.filter((b) => b.t > 0); this.recalc(a); }
     }
     if (a.dead) return;
+    if (a.kbx || a.kby) { a.x += a.kbx * dt; a.y += a.kby * dt; const f = Math.pow(0.02, dt); a.kbx *= f; a.kby *= f; if (Math.abs(a.kbx) + Math.abs(a.kby) < 0.15) a.kbx = a.kby = 0; }
     // mecânicas de chefe
     if (a.mob?.boss) this.bossMech(a);
     if (a.stompAt > 0 && this.t >= a.stompAt) this.doStomp(a);
@@ -491,6 +547,7 @@ export class Battle {
       else if (cfg.prio === 'advantage') { const m = (e.res[a.basic.dmg] ?? 1) * (1 + (a.m.vs?.[e.kind!] ?? 0) + (e.slowKind ? a.m.vsSlow ?? 0 : 0)); s += (m - 1) * 3; }
       else s -= d * 0.2;
       if (cfg.style === 'kite' && e.range > 2.8 && cfg.prio !== 'nearest') s += 2.5; // à distância: inimigos ranged primeiro
+      if (e.golden) s += 3;
       if (cur === e) s += 0.8; // histerese
       if (s > bs) { bs = s; best = e; }
     }
@@ -505,87 +562,149 @@ export class Battle {
       // velocidade medida entre reavaliações
       if (this.t - e.lt >= 0.1) { if (this.t - e.lt < 0.6) { e.vx = (e.x - e.lx) / (this.t - e.lt); e.vy = (e.y - e.ly) / (this.t - e.lt); } else { e.vx = e.vy = 0; } e.lx = e.x; e.ly = e.y; e.lt = this.t; }
       if (this.dist(a, e) > 9.5) continue;
-      out.push({ x: e.x, y: e.y, vx: e.vx, vy: e.vy, range: e.range * (e.mob?.boss ? e.scale * 0.6 : 1), spd: e.spd, melee: e.range < 2.8, stomp: e.stompAt > 0 });
+      out.push({ x: e.x, y: e.y, vx: e.vx, vy: e.vy, range: e.range * (e.mob?.boss ? e.scale * 0.6 : 1), spd: e.spd * (e.status.some((x) => x.k === 'stun' || x.k === 'freeze') ? 0.05 : e.status.some((x) => x.k === 'slow') ? 0.55 : 1), melee: e.range < 2.8, stomp: e.stompAt > 0 });
     }
     return out;
+  }
+
+  private aiLogPush(a: Actor, text: string, force = false) {
+    if (!this.debug || !a.isPlayer) return;
+    const last = this.aiLog[this.aiLog.length - 1];
+    if (!force && last && last.text === text) return;
+    this.aiLog.push({ t: this.t, text }); if (this.aiLog.length > 40) this.aiLog.shift();
   }
 
   private aiPlan(a: Actor, tgt: Actor, cfg: AiCfg) {
     const map = this.aiMap;
     const threats = this.threatsFor(a);
     const hpF = a.hp / a.maxHp;
-    const nearCount = threats.filter((e) => Math.hypot(e.x - a.x, e.y - a.y) < cfg.nearR).length;
-    const meleeClose = threats.filter((e) => e.melee && Math.min(Math.hypot(e.x - a.x, e.y - a.y), Math.hypot(e.x + e.vx * 0.5 - a.x, e.y + e.vy * 0.5 - a.y)) < Math.max(cfg.safe, 1.8)).length;
+    const dd = (e: Threat) => Math.hypot(e.x - a.x, e.y - a.y);
+    const nearCount = threats.filter((e) => dd(e) < cfg.nearR).length;
+    // tempo até o contato (reação antecipada): recua ANTES de o mob chegar
+    const ttc = (e: Threat) => Math.max(0, dd(e) - (e.range + 0.4)) / Math.max(0.6, e.spd);
+    const soon = threats.filter((e) => e.melee && (ttc(e) < cfg.react || dd(e) < cfg.safe));
     const curOpen = openAt(map, a.x, a.y);
-    const trapped = curOpen < cfg.minOpen && meleeClose > 0;
+    const trapped = curOpen < cfg.minOpen && soon.length > 0;
     const surrounded = nearCount > cfg.maxNear + 1;
     const emergency = (hpF < cfg.retreatHp && nearCount > 0) || surrounded || trapped;
-    let threatened = cfg.style === 'kite' ? meleeClose > 0 : ((nearCount > cfg.maxNear && hpF < 0.65) || (hpF < cfg.retreatHp && nearCount > 0));
+    let threatened = cfg.style === 'kite' ? soon.length > 0 : ((nearCount > cfg.maxNear && hpF < 0.65) || (hpF < cfg.retreatHp && nearCount > 0));
     // recuar não está funcionando (mobs colados por muito tempo)? desiste e luta por um instante
     if (threatened && !emergency) { if (a.kiteSince < 0) a.kiteSince = this.t; if (this.t - a.kiteSince > 3 && this.t > a.standUntil) { a.standUntil = this.t + 1.6; a.kiteSince = -1; } if (this.t < a.standUntil) threatened = false; }
     else if (!threatened) a.kiteSince = -1;
-    const mode: 'engage' | 'kite' = threatened ? 'kite' : 'engage';
+    const wasBesieged = a.ai?.mode === 'besieged';
     const zones = this.actors.filter((e) => e.team === 1 && !e.dead && e.stompAt > 0).map((e) => ({ x: e.x, y: e.y, r: 3.4 }));
     const w = emergency ? { ...cfg.w, melee: cfg.w.melee * 2, ideal: cfg.w.ideal * 0.3, center: 0, range: 0 } : cfg.w;
-    const ctx: ScoreCtx = { cfg, w, map, ax: a.x, ay: a.y, tgt: { x: tgt.x, y: tgt.y }, range: a.range, threats, zones, cx: 6, cy: 8.5, emergency };
+    const ctx: ScoreCtx = { cfg, w, map, ax: a.x, ay: a.y, tgt: { x: tgt.x, y: tgt.y }, range: a.range, threats, mask: threatMask(threats), zones, cx: 6, cy: 8.5, emergency };
     const cur = scorePos(ctx, a.x, a.y);
     const cands: [number, number, number][] = [];
-    const R = cfg.radius;
-    const tx0 = Math.floor(a.x), ty0 = Math.floor(a.y);
+    const R = cfg.radius; const tx0 = Math.floor(a.x), ty0 = Math.floor(a.y);
     for (let dy = -R; dy <= R; dy++) for (let dx = -R; dx <= R; dx++) {
-      if (dx * dx + dy * dy > R * R) continue;
+      if (dx * dx + dy * dy > R * R || ((dx + dy) & 1 && dx * dx + dy * dy > 4)) continue; // xadrez fora do entorno imediato (economiza CPU)
       const x = tx0 + dx + 0.5, y = ty0 + dy + 0.5;
       if (!inBounds(x, y) || !freeAt(map.obstacles, x, y)) continue;
       if (openAt(map, x, y) < Math.min(cfg.minOpen, curOpen) && routesAt(map, x, y) < 0.5) continue; // nunca recua para beco/canto
-      cands.push([x, y, scorePos(ctx, x, y)]);
+      cands.push([x, y, scorePos(ctx, x, y, false)]);
     }
     cands.sort((p, q) => q[2] - p[2]);
-    let dest: { x: number; y: number } | null = null, path: { x: number; y: number }[] = [], cornered = false, note = '';
+    // 2ª passada (cara: corredor livre + área alcançável) só nos melhores candidatos
+    if (cands.length > 8) cands.length = 8;
+    for (const c of cands) c[2] = scorePos(ctx, c[0], c[1], true);
+    cands.sort((p, q) => q[2] - p[2]);
     const avoid = this.actors.filter((e) => e.team === 1 && !e.dead);
-    const margin = mode === 'engage' ? 0.8 : 0.05;
+    const engageMargin = 0.8;
+    const margin = !threatened ? engageMargin : wasBesieged ? 1.2 : 0.05;
+    let dest: { x: number; y: number } | null = null, path: { x: number; y: number }[] = [];
     for (let i = 0; i < Math.min(3, cands.length); i++) {
       const c = cands[i];
       if (c[2] < cur + margin) break;
       const p = astar(map, a.x, a.y, c[0], c[1], avoid);
       if (p && p.length <= R * 2.4) { dest = { x: c[0], y: c[1] }; path = p; break; }
     }
-    if (!dest && mode === 'kite') { cornered = true; note = 'sem posição melhor'; }
-    a.ai = { mode, path, cornered, emergency, nm: Math.min(99, ...threats.filter((e) => e.melee).map((e) => Math.hypot(e.x - a.x, e.y - a.y))) };
-    // último recurso: salto / teleporte / empurrão / investida
-    const dash = cfg.dash;
-    if (dash && emergency && (cornered || surrounded || hpF < cfg.retreatHp) && this.t >= a.dashCd) {
-      let bx = 0, by = 0, bs = cur + 2.5, found = false;
-      for (const c of cands) {
-        const d = Math.hypot(c[0] - a.x, c[1] - a.y); if (d < 1.5 || d > dash.dist) continue;
-        if (losBlocked(map.obstacles, a.x, a.y, c[0], c[1]) ) continue;
-        if (c[2] > bs) { bs = c[2]; bx = c[0]; by = c[1]; found = true; }
-      }
-      if (found) { this.doDash(a, bx, by, dash); a.dashCd = this.t + dash.cd; a.ai.path = []; dest = null; note = 'dash'; }
-    }
+    const noRoute = threatened && !dest;
+    // modo cercado: aceita ficar encurralado, luta para abrir caminho e volta ao kiting quando abrir uma brecha real
+    const besieged = noRoute && nearCount >= 1;
+    const mode: 'engage' | 'kite' | 'besieged' = besieged ? 'besieged' : threatened ? 'kite' : 'engage';
+    a.ai = { mode, path, cornered: besieged, emergency, nm: Math.min(99, ...threats.filter((e) => e.melee).map((e) => dd(e))) };
     a.aiEmergency = emergency;
-    if (this.debug) a.dbg = { cands: cands.slice(0, 120), dest, path, mode, emergency, cornered, threats: threats.map((e) => ({ x: e.x, y: e.y, melee: e.melee })), ideal: cfg.ideal, safe: cfg.safe, range: a.range, hp: hpF, dashIn: Math.max(0, a.dashCd - this.t), note };
-  }
-
-  private doDash(a: Actor, x: number, y: number, d: NonNullable<AiCfg['dash']>) {
-    this.addFx('ring', a.x, a.y, 0, 0, 0.35, '#9ad0ff', 1.4);
-    this.addFx('spark', a.x, a.y, 0, 0, 0.45, '#cfe8ff', 1.2);
-    for (const e of this.enemies) {
-      const dd = this.dist(a, e);
-      if (d.slow && dd < d.slow + 0.8) e.status.push({ k: 'slow', t: 2.5, p: 0, src: a.id });
-      if (d.push && dd < d.push) { const dx = e.x - a.x, dy = e.y - a.y, l = Math.hypot(dx, dy) || 1; e.x += (dx / l) * 1.6; e.y += (dy / l) * 1.6; if (e.variant !== 'b') e.status.push({ k: 'stun', t: 0.7, p: 0, src: a.id }); }
+    // motivo da decisão (log de depuração)
+    let reason = '';
+    const fm = (n: number) => n.toFixed(1);
+    if (besieged) reason = `cercado: sem rota válida (${nearCount} mobs perto) → lutando para abrir caminho`;
+    else if (wasBesieged && dest) reason = 'brecha encontrada: saindo do cerco';
+    else if (threatened && dest) { const m = soon[0]; reason = m ? `recuando: ${soon.length} mob(s), contato em ${fm(ttc(m))}s, a ${fm(dd(m))} tiles → destino (${fm(dest.x)}, ${fm(dest.y)})` : `recuando: HP ${Math.round(hpF * 100)}%`; }
+    else if (threatened) reason = 'ameaçado mas já na melhor posição';
+    else if (dest) reason = `posicionando: ajustando distância ideal (${fm(cfg.ideal)}) do alvo`;
+    else reason = 'parado: posição boa, atacando';
+    if (emergency) reason = `EMERGÊNCIA (${hpF < cfg.retreatHp ? 'HP baixo' : surrounded ? 'cercado por ' + nearCount : 'beco'}): ` + reason;
+    // manobra real (sem teleporte): salto/investida/empurrão
+    const man = a.maneuver; let maneuverNote = '';
+    if (man && a.auto.maneuver !== false && emergency && (noRoute || surrounded || hpF < cfg.retreatHp) && this.t >= a.dashCd) {
+      if (man.kind === 'push') {
+        const near = this.enemies.filter((e) => this.dist(a, e) < (man.push ?? 2.4));
+        if (near.length) { this.doPush(a, near, man); a.dashCd = this.t + man.cd; maneuverNote = `manobra: ${man.name}`; }
+      } else {
+        let best: [number, number, number] | null = null;
+        for (const c of cands) {
+          const d = Math.hypot(c[0] - a.x, c[1] - a.y); if (d < 1.0 || d > man.dist) continue;
+          if (c[2] < cur + 1.5 || (best && c[2] <= best[2])) continue;
+          if (losBlocked(map.obstacles, a.x, a.y, c[0], c[1])) continue;                    // não atravessa paredes/obstáculos
+          if (this.segHitsEnemy(a.x, a.y, c[0], c[1], 0.6)) continue;                       // nem mobs
+          best = c;
+        }
+        if (best) { this.startManeuver(a, best[0], best[1], man); a.dashCd = this.t + man.cd; maneuverNote = `manobra: ${man.name} → (${fm(best[0])}, ${fm(best[1])})`; a.ai.path = []; dest = null; path = []; }
+        else if (noRoute) maneuverNote = 'manobra indisponível: sem trajeto livre';
+      }
     }
-    a.x = x; a.y = y; a.px = x; a.py = y;
-    this.addFx('ring', x, y, 0, 0, 0.35, '#9ad0ff', 1.2);
-    this.float(a.x, a.y - 0.8, d.name + '!', '#9ad0ff');
+    if (maneuverNote) reason += ' | ' + maneuverNote;
+    this.aiLogPush(a, reason);
+    if (this.debug) a.dbg = { cands: cands.slice(0, 120), dest, path, mode, emergency, cornered: besieged, threats: threats.map((e) => ({ x: e.x, y: e.y, melee: e.melee })), ideal: cfg.ideal, safe: cfg.safe, range: a.range, hp: hpF, dashIn: Math.max(0, a.dashCd - this.t), note: reason };
   }
 
-  private allyAi(a: Actor, tgt: Actor, mv: number): boolean {
+  private segHitsEnemy(x0: number, y0: number, x1: number, y1: number, r: number) {
+    const dx = x1 - x0, dy = y1 - y0, l2 = dx * dx + dy * dy || 1;
+    for (const e of this.enemies) { let t = ((e.x - x0) * dx + (e.y - y0) * dy) / l2; t = Math.max(0, Math.min(1, t)); if (Math.hypot(x0 + dx * t - e.x, y0 + dy * t - e.y) < r + 0.15 * e.scale) return true; }
+    return false;
+  }
+
+  /** Manobra: o ator ANDA em alta velocidade (nunca muda de posição instantaneamente). */
+  private startManeuver(a: Actor, x: number, y: number, m: Maneuver) {
+    const dist = Math.hypot(x - a.x, y - a.y);
+    a.dash = { x0: a.x, y0: a.y, tx: x, ty: y, t: 0, dur: Math.max(0.2, dist / 8), kind: m.kind === 'jump' ? 'jump' : 'dash' };
+    this.addFx('ring', a.x, a.y, 0, 0, 0.3, m.col, 1.1);
+    this.float(a.x, a.y - 0.8, m.name + '!', m.col);
+  }
+  private stepDash(a: Actor, dt: number) {
+    const d = a.dash!; d.t += dt;
+    const prog = Math.min(1, d.t / d.dur);
+    const nx = d.x0 + (d.tx - d.x0) * prog, ny = d.y0 + (d.ty - d.y0) * prog;
+    const blockedNow = !inBounds(nx, ny) || !freeAt(this.aiMap.obstacles, nx, ny, 0.2) || this.enemies.some((e) => Math.hypot(e.x - nx, e.y - ny) < 0.45 + 0.12 * e.scale);
+    if (blockedNow) { a.dash = undefined; a.air = 0; this.aiLogPush(a, 'manobra interrompida: obstáculo/mob no caminho', true); return; }
+    a.x = nx; a.y = ny; a.air = d.kind === 'jump' ? Math.sin(prog * Math.PI) * 1.5 : 0;
+    if (this.cfg.fx) this.addFx('spark', nx, ny, 0, 0, 0.25, '#cfe8ff', 0.5);
+    if (prog >= 1) { a.dash = undefined; a.air = 0; if (a.maneuver?.kind === 'dash') this.addFx('ring', a.x, a.y, 0, 0, 0.3, a.maneuver.col, 1); }
+    if (a.maneuver?.name === 'Impulso Arcano' && prog >= 1) for (const e of this.enemies) if (this.dist(a, e) < 2.6) e.status.push({ k: 'slow', t: 2.5, p: 0, src: a.id });
+  }
+  private doPush(a: Actor, near: Actor[], m: Maneuver) {
+    this.addFx('ring', a.x, a.y, 0, 0, 0.4, m.col, m.push ?? 2.4); this.addFx('pillar', a.x, a.y, 0, 0, 0.5, m.col, 1.6);
+    this.float(a.x, a.y - 0.8, m.name + '!', m.col);
+    for (const e of near) { const dx = e.x - a.x, dy = e.y - a.y, l = Math.hypot(dx, dy) || 1; const f = e.variant === 'b' ? 3 : 7; e.kbx = (dx / l) * f; e.kby = (dy / l) * f; if (e.variant !== 'b') e.status.push({ k: 'stun', t: 0.6, p: 0, src: a.id }); }
+  }
+
+  private allyAi(a: Actor, tgt0: Actor, mv: number): boolean {
     const cfg = CLASS_AI[a.classId!];
+    let tgt = tgt0;
+    if (a.dash) { this.stepDash(a, TICK); return true; }
     if (this.t >= a.aiNext || !a.ai) { this.aiPlan(a, tgt, cfg); a.aiNext = this.t + AI_STEP; }
     const ai = a.ai!;
+    if (a.dash) return true;
+    // cercado: ataca o mob mais fraco colado para abrir caminho
+    if (ai.mode === 'besieged') {
+      let weak: Actor | null = null;
+      for (const e of this.enemies) if (this.dist(a, e) < Math.max(2.4, a.range * 0.4) && (!weak || e.hp < weak.hp)) weak = e;
+      if (weak) { tgt = weak; a.tgtUntil = this.t + 0.5; a.target = weak.id; }
+    }
     if (a.skills.length && this.trySkills(a, tgt, mv)) return true;
-    const d = this.dist(a, tgt);
-    // segue o caminho escolhido (A*)
+    // segue o caminho escolhido (A*), andando tile a tile
     let step = mv;
     while (ai.path.length && step > 0) {
       const n = ai.path[0]; const dx = n.x - a.x, dy = n.y - a.y, l = Math.hypot(dx, dy);
@@ -596,12 +715,11 @@ export class Battle {
     }
     const moving = ai.path.length > 0;
     const d2 = this.dist(a, tgt);
-    if (d2 <= a.range && this.t >= a.nextAtk && (ai.mode === 'engage' || ai.cornered || !moving || ai.nm > (cfg.style === 'melee' ? 0 : 1.5))) {
+    if (d2 <= a.range && this.t >= a.nextAtk && (ai.mode !== 'kite' || !moving || ai.nm > (cfg.style === 'melee' ? 0 : 1.5))) {
       a.face = tgt.x >= a.x ? 1 : -1; this.basicAttack(a, tgt); a.nextAtk = this.t + this.interval(a);
     } else if (!moving && d2 > a.range * 0.95 && ai.mode === 'engage') {
-      this.moveTo(a, tgt.x, tgt.y, mv, a.range * 0.85); // fora de alcance e sem posição melhor: aproxima
+      this.moveTo(a, tgt.x, tgt.y, mv, a.range * 0.85);
     }
-    void d;
     return true;
   }
 
@@ -656,7 +774,7 @@ export class Battle {
   private should(a: Actor, s: Skill, tgt: Actor): boolean {
     const en = this.enemies;
     const cfg = Battle.AI && a.classId ? CLASS_AI[a.classId] : undefined;
-    if (cfg?.emergencySkills.includes(s.id) && !a.aiEmergency && en.filter((e) => this.dist(a, e) < 3).length < 3) return false; // guardada para emergência
+    if (cfg?.emergencySkills.includes(s.id) && !a.aiEmergency && a.ai?.mode !== 'besieged' && en.filter((e) => this.dist(a, e) < 3).length < 3) return false; // guardada para emergência
     switch (s.kind) {
       case 'atk': {
         if (!s.all && !s.self && this.dist(a, tgt) > a.range) return false;

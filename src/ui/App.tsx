@@ -7,8 +7,10 @@ import { iconURL } from '../render/icons';
 import { Renderer } from '../render/renderer';
 import { useGame } from './hooks';
 import { CharacterPanel, InventoryPanel, MapsPanel, SkillsPanel } from './panels';
+import { MetasPanel } from './metas';
 import { ServiceSheet } from './town';
 import { Intro } from './Intro';
+import { EVENTS } from '../data/events';
 import { ClassPreview } from './ClassPreview';
 import { CLASS_PREVIEW, VISION, ACTIVITY_MIN_LEVEL } from '../data/onboarding';
 import { SERVICES } from '../data/shops';
@@ -16,10 +18,10 @@ import { audio } from '../audio/audio';
 import { OfflineModal, SettingsPanel } from './settings';
 import { spriteFor } from '../render/sprites';
 
-type Tab = 'char' | 'skills' | 'inv' | 'maps' | 'cfg';
+type Tab = 'char' | 'skills' | 'inv' | 'maps' | 'metas' | 'cfg';
 const TABS: { id: Tab; label: string; ico: string }[] = [
-  { id: 'char', label: 'Personagem', ico: '⚔' }, { id: 'skills', label: 'Skills', ico: '✦' }, { id: 'inv', label: 'Inventário', ico: '🎒' },
-  { id: 'maps', label: 'Mapas', ico: '🗺' },
+  { id: 'char', label: 'Herói', ico: '⚔' }, { id: 'skills', label: 'Habilidades', ico: '✦' }, { id: 'inv', label: 'Mochila', ico: '🎒' },
+  { id: 'maps', label: 'Mapas', ico: '🗺' }, { id: 'metas', label: 'Metas', ico: '🏆' },
 ];
 
 export function App() {
@@ -29,10 +31,12 @@ export function App() {
     const iv = setInterval(() => game.emit(), 400);
     const vis = () => { if (document.hidden) game.persist(); };
     const unlock = () => audio.unlock();
+    const click = (e: Event) => { if ((e.target as HTMLElement)?.closest?.('button')) audio.sfx('click'); };
+    document.addEventListener('click', click);
     document.addEventListener('pointerdown', unlock);
     document.addEventListener('visibilitychange', vis);
     window.addEventListener('pagehide', vis);
-    return () => { clearInterval(iv); document.removeEventListener('pointerdown', unlock); document.removeEventListener('visibilitychange', vis); window.removeEventListener('pagehide', vis); };
+    return () => { clearInterval(iv); document.removeEventListener('pointerdown', unlock); document.removeEventListener('click', click); document.removeEventListener('visibilitychange', vis); window.removeEventListener('pagehide', vis); };
   }, []);
   const [introDone, setIntroDone] = useState(() => { try { return localStorage.getItem('masmorra-intro') === '1'; } catch { return false; } });
   if (!g.has) {
@@ -82,10 +86,12 @@ function Main() {
   const g = useGame();
   const [tab, setTab] = useState<Tab | null>(null);
   // ao viajar/trocar de cena, fecha painéis abertos para mostrar a tela de carregamento e o novo mapa
+  const badges = g.badges(); const rec = g.recommended();
   const phase = g.transition?.phase;
   useEffect(() => { if (phase === 'out') { setTab(null); game.service = null; } }, [phase]);
   return (
     <div className="app" data-hint={g.activeHint?.h.target ?? ''}>
+      {!g.vision && <GoalBar />}
       <div className="arena">
         <CombatCanvas />
         {!g.vision && !tab && !g.service && <button className="gear" aria-label="Configurações" onClick={() => setTab('cfg')}>⚙</button>}
@@ -99,7 +105,6 @@ function Main() {
         )}
         {!g.vision && g.scene === 'field' && g.activeHint && <div className="hintbubble" onClick={() => game.dismissHint()}><b>💡</b> {g.activeHint.h.text}</div>}
         {!g.vision && g.banner && <div className="bannerov"><div className="bt">{g.banner.text}</div><div className="bs">{g.banner.sub}</div></div>}
-        {!g.vision && !tab && !g.service && <QuestChip />}
         <div className="toasts">{g.toasts.map((t) => <div key={t.id} className="toast" style={{ color: t.col }}>{t.text}</div>)}</div>
         {g.service && !tab && <ServiceSheet id={g.service} />}
         {tab && (
@@ -110,6 +115,7 @@ function Main() {
               {tab === 'skills' && <SkillsPanel />}
               {tab === 'inv' && <InventoryPanel />}
               {tab === 'maps' && <MapsPanel />}
+              {tab === 'metas' && <MetasPanel />}
               {tab === 'cfg' && <SettingsPanel />}
             </div>
           </div>
@@ -118,12 +124,14 @@ function Main() {
       {g.vision ? null : g.scene === 'town' ? <TownBar /> : <SkillBar />}
       <nav className="nav">
         {TABS.map((t) => (
-          <button key={t.id} className={tab === t.id ? 'on' : ''} onClick={() => { game.openService(null); setTab(tab === t.id ? null : t.id); }}>
+          <button key={t.id} className={(tab === t.id ? 'on' : '') + (rec === t.id ? ' rec' : '')} onClick={() => { game.openService(null); if (tab !== t.id) { if (t.id === 'skills') game.markSeen('skills'); if (t.id === 'maps') game.markSeen('maps'); } setTab(tab === t.id ? null : t.id); }}>
             <span className="ico">{t.ico}</span><span className="lbl">{t.label}</span>
+            {badges[t.id as keyof typeof badges] && <i className="dot" />}
           </button>
         ))}
-        <button className={g.scene === 'town' ? 'on' : ''} onClick={() => { setTab(null); game.openService(null); if (g.scene === 'town') game.goField(); else game.goTown(); }}>
+        <button className={(g.scene === 'town' ? 'on' : '') + (rec === 'town' ? ' rec' : '')} onClick={() => { setTab(null); game.openService(null); if (g.scene === 'town') game.goField(); else game.goTown(); }}>
           <span className="ico">{g.scene === 'town' ? '⚔' : '🏠'}</span><span className="lbl">{g.scene === 'town' ? 'Caçar' : 'Cidade'}</span>
+          {badges.town && g.scene !== 'town' && <i className="dot" />}
         </button>
       </nav>
       {g.surprise && !g.vision && <SurpriseModal />}
@@ -259,3 +267,16 @@ function SurpriseModal() {
   );
 }
 void ACTIVITY_MIN_LEVEL;
+
+function GoalBar() {
+  const g = useGame(); const inv = g.invasionState(); const w = g.meta.events.wanderer; const wb = g.weekendLabel();
+  return (
+    <div className="goalwrap">
+      <div className="goal"><span className="grow">{g.nextGoal()}</span>{wb && <span className="wbchip">🎉 {wb}</span>}</div>
+      {inv && <div className="invbar"><i style={{ width: `${(inv.killed / inv.total) * 100}%` }} /><span>⚔ INVASÃO {inv.killed}/{inv.total} · {Math.ceil(inv.t)}s</span></div>}
+      {w && !w.spawned && w.mapId !== g.save.mapId && g.scene === 'field' && (
+        <div className="wander"><span className="grow">⚠ {EVENTS.wanderingBoss.byMap[w.mapId]?.text}</span><button className="mini" onClick={() => g.travel(w.mapId)}>Ir</button></div>
+      )}
+    </div>
+  );
+}

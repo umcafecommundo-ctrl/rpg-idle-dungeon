@@ -10,6 +10,7 @@ import { useGame } from './hooks';
 import { CLASS_AI, type AiWeights } from '../data/ai';
 
 export function OfflineModal({ s, onClose }: { s: OfflineSummary; onClose: () => void }) {
+  const [busy, setBusy] = useState(false);
   const h = Math.floor(s.secs / 3600), m = Math.floor((s.secs % 3600) / 60);
   return (
     <div className="modal">
@@ -28,6 +29,7 @@ export function OfflineModal({ s, onClose }: { s: OfflineSummary; onClose: () =>
         </ul>
         {s.gift && <div className="card"><b className="hl">🎁 {s.gift}</b></div>}
         <div className="muted small">Ganhos offline têm 85% da eficiência normal. Itens comuns são vendidos automaticamente (configurável).</div>
+        {!s.doubled ? <button className="btn rec" disabled={busy} onClick={async () => { setBusy(true); await game.doubleOffline(); setBusy(false); }}>{busy ? 'Assistindo…' : '▶ Dobrar ganhos (assistir vídeo)'}</button> : <div className="up">✔ Ganhos dobrados!</div>}
         <button className="btn" onClick={onClose}>Continuar</button>
       </div>
     </div>
@@ -129,7 +131,7 @@ function BalanceDebug() {
   );
 }
 
-const W_LABEL: Record<keyof AiWeights, string> = { ideal: 'Distância ideal', range: 'Fora do alcance', los: 'Linha de visão', melee: 'Medo de corpo a corpo', near: 'Excesso de mobs', open: 'Espaço livre', routes: 'Rotas de fuga', corner: 'Cantos/becos', danger: 'Área de perigo', center: 'Longe do centro', move: 'Custo de mover', stay: 'Ficar parado', arc: 'Recuo em arco', cover: 'Cobertura' };
+const W_LABEL: Record<keyof AiWeights, string> = { ideal: 'Distância ideal', range: 'Fora do alcance', los: 'Linha de visão', melee: 'Medo de corpo a corpo', near: 'Excesso de mobs', open: 'Espaço livre', routes: 'Rotas de fuga', corner: 'Cantos/becos', danger: 'Área de perigo', center: 'Longe do centro', move: 'Custo de mover', stay: 'Ficar parado', arc: 'Recuo em arco', cover: 'Cobertura', runway: 'Corredor livre à frente', area: 'Área alcançável' };
 function AiTuner() {
   const g = useGame(); const cfg = CLASS_AI[g.save.active]; const [, force] = useState(0);
   const set = (fn: () => void) => { fn(); force((n) => n + 1); };

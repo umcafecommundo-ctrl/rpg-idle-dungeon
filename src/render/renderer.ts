@@ -158,9 +158,11 @@ export class Renderer {
     for (const t of d.threats) { g.strokeStyle = t.melee ? '#ff5050' : '#ffb030'; g.lineWidth = 2 * dpr; g.beginPath(); g.arc(this.X(t.x), this.Y(t.y), 5 * S, 0, 7); g.stroke(); }
     if (d.path.length) { g.strokeStyle = '#ffffff'; g.lineWidth = 2 * dpr; g.beginPath(); g.moveTo(this.X(a.x), this.Y(a.y)); for (const p of d.path) g.lineTo(this.X(p.x), this.Y(p.y)); g.stroke(); }
     if (d.dest) { g.fillStyle = '#ffffff'; g.fillRect(this.X(d.dest.x) - 3 * S, this.Y(d.dest.y) - 3 * S, 6 * S, 6 * S); }
-    const lines = [`IA: ${d.mode}${d.emergency ? ' EMERGÊNCIA' : ''}${d.cornered ? ' ENCURRALADO' : ''}`, `HP ${Math.round(d.hp * 100)}%  dash ${d.dashIn.toFixed(1)}s ${d.note}`, 'verde=melhor nota · anel verde=alcance · ciano=ideal · vermelho=segurança'];
-    g.fillStyle = 'rgba(10,6,18,0.78)'; g.fillRect(6 * dpr, this.H - 108 * dpr, Math.min(this.W - 12 * dpr, 250 * dpr), 40 * dpr);
-    lines.forEach((l, i) => this.text(l, 10 * dpr, this.H - 100 * dpr + i * 11 * dpr, i === 0 ? '#9fffb0' : '#cfc0e8', 7.5 * dpr, 'left', i === 0));
+    const log = b.aiLog.slice(-4).map((e) => `${e.t.toFixed(1)}s ${e.text}`);
+    const lines = [`IA: ${d.mode}${d.emergency ? ' EMERGÊNCIA' : ''}  HP ${Math.round(d.hp * 100)}%  manobra em ${d.dashIn.toFixed(1)}s`, ...log];
+    const bh = (lines.length * 10 + 6) * dpr;
+    g.fillStyle = 'rgba(10,6,18,0.82)'; g.fillRect(4 * dpr, this.H - 112 * dpr - bh, this.W - 8 * dpr, bh);
+    lines.forEach((l, i) => this.text(l.length > 78 ? l.slice(0, 78) + '…' : l, 8 * dpr, this.H - 112 * dpr - bh + 8 * dpr + i * 10 * dpr, i === 0 ? '#9fffb0' : '#cfc0e8', 6.6 * dpr, 'left', i === 0));
   }
 
   private drawTown(game: Game, now: number) {
@@ -232,10 +234,11 @@ export class Renderer {
     let lunge = 0;
     if (a.atkAnim > 0 && a.mob) lunge = Math.sin((a.atkAnim / 0.2) * Math.PI) * 2.5 * S * a.face;
     if (a.atkAnim > 0 && !a.mob && a.range < 3) lunge = Math.sin((a.atkAnim / 0.25) * Math.PI) * 2.5 * S * a.face;
-    const fly = a.flying ? -4 * S + Math.sin(now * 0.01 + a.id) * 1.5 * S : 0;
+    const fly = (a.flying ? -4 * S + Math.sin(now * 0.01 + a.id) * 1.5 * S : 0) - a.air * 16 * S;
     // sombra
     g.fillStyle = 'rgba(0,0,0,0.35)'; g.beginPath(); g.ellipse(sx, sy, 6 * S * sc, 2.2 * S * sc, 0, 0, 7); g.fill();
     // aura de elite/chefe
+    if (!a.dead && a.golden) { g.fillStyle = '#fff0a0'; for (let i = 0; i < 3; i++) { const an = now * 0.006 + i * 2.1; g.fillRect(sx + Math.cos(an) * 8 * S, sy - 8 * S + Math.sin(an * 1.3) * 6 * S, 2 * S, 2 * S); } }
     if (!a.dead && a.variant !== 'n') {
       const pulse = 0.5 + 0.5 * Math.sin(now * 0.006 + a.id);
       g.strokeStyle = a.variant === 'b' ? `rgba(255,60,60,${0.5 + pulse * 0.4})` : `rgba(255,200,60,${0.4 + pulse * 0.4})`; g.lineWidth = 2;
@@ -243,7 +246,8 @@ export class Renderer {
     }
     if (a.summon && !a.dead) { g.strokeStyle = 'rgba(120,255,200,0.7)'; g.lineWidth = 1.5; g.beginPath(); g.ellipse(sx, sy, 6 * S, 2.2 * S, 0, 0, 7); g.stroke(); }
     let img = base;
-    if (a.summon) img = tintOf(base, a.sprite, '#40ffb0');
+    if (a.golden) img = tintOf(base, a.sprite + 'g', '#ffd040');
+    else if (a.summon) img = tintOf(base, a.sprite, '#40ffb0');
     else if (a.variant === 'e') img = tintOf(base, a.sprite + a.color, '#ffc040');
     else if (a.enraged) img = tintOf(base, a.sprite + a.color, '#ff2020');
     else if (a.status.some((s) => s.k === 'freeze')) img = tintOf(base, a.sprite + a.color, '#60d0ff');

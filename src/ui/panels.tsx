@@ -14,7 +14,8 @@ import { MAX_INV } from '../engine/save';
 import { iconURL } from '../render/icons';
 import { CONSUMABLES } from '../data/shops';
 import { itemName } from '../engine/shop';
-import { Dur, ItemLines } from './town';
+import { Compare, Dur, ItemLines } from './town';
+import { skillDetails, statDetails, STATUS_INFO } from './tips';
 import { useGame } from './hooks';
 
 const Bar = ({ v, col, label }: { v: number; col: string; label?: string }) => (
@@ -29,7 +30,7 @@ export function CharacterPanel() {
   const c = g.char, d = g.derived, cls = g.cls;
   const free = g.freePoints();
   const tp = g.talentPointsLeft();
-  const [cfm, setCfm] = useState(false);
+  const [cfm, setCfm] = useState(false); const [tipStat, setTipStat] = useState<Stat | null>(null);
   return (
     <div className="stack">
       <div className="chips">
@@ -49,13 +50,16 @@ export function CharacterPanel() {
       <div className="card">
         <div className="row"><b>Atributos</b><span className="muted">Pontos livres: <b className={free > 0 ? 'hl' : ''}>{free}</b></span></div>
         {STATS.map((s: Stat) => (
-          <div className="row stat" key={s} title={STAT_DESC[s]}>
-            <span className="sl">{STAT_LABEL[s]}</span>
+          <div className="statwrap" key={s}>
+          <div className="row stat" onClick={() => setTipStat(tipStat === s ? null : s)}>
+            <span className="sl">{STAT_LABEL[s]} ⓘ</span>
             <b>{Math.floor(d.stats[s])}</b>
             <span className="muted small">(+{c.alloc[s]})</span>
             <span className="grow" />
-            <button className="mini" disabled={free < 1 || c.auto} onClick={() => g.allocStat(s, 1)}>+1</button>
-            <button className="mini" disabled={free < 5 || c.auto} onClick={() => g.allocStat(s, 5)}>+5</button>
+            <button className="mini" disabled={free < 1 || c.auto} onClick={(e) => { e.stopPropagation(); g.allocStat(s, 1); }}>+1</button>
+            <button className="mini" disabled={free < 5 || c.auto} onClick={(e) => { e.stopPropagation(); g.allocStat(s, 5); }}>+5</button>
+          </div>
+          {tipStat === s && <div className="tip"><span>{STAT_DESC[s]}</span>{statDetails(s, cls, d).map((l) => <span key={l}>{l}</span>)}</div>}
           </div>
         ))}
         <label className="row check"><input type="checkbox" checked={c.auto} onChange={(e) => g.setAutoAlloc(e.target.checked)} /> Distribuição automática (preset da classe)</label>
@@ -105,32 +109,45 @@ export function CharacterPanel() {
   );
 }
 
-// ───────────────────────── Skills ─────────────────────────
+// ───────────────────────── Habilidades ─────────────────────────
 export function SkillsPanel() {
-  const g = useGame(); const cls = g.cls;
+  const g = useGame(); const cls = g.cls; const [open, setOpen] = useState<string | null>(null);
+  const man = cls.maneuver; const manLocked = man.lv > g.level; const manAuto = g.char.skillAuto.maneuver ?? true;
   return (
     <div className="stack">
-      <div className="muted small">Toque no “A” da barra de skills para ligar/desligar o auto-cast de cada slot. Toque no ícone para lançar manualmente.</div>
+      <div className="muted small">Toque numa habilidade para ver os números e contra quem ela é boa. Na barra, o “A” liga/desliga o auto-cast e tocar no ícone lança na hora.</div>
       {cls.skills.map((s, i) => {
         const locked = s.lv > g.level; const auto = g.char.skillAuto[s.id] ?? true;
         return (
-          <div key={s.id} className={'card skill' + (locked ? ' lockd' : '')}>
-            <img src={iconURL(s.icon, s.col)} alt="" />
-            <div className="grow">
-              <div className="row"><b>{i + 1}. {s.name}</b><span className="muted small">{locked ? `Nv ${s.lv}` : `MP ${skillMpCost(s.mp, g.level)} · ${s.cd}s`}</span></div>
-              <div className="muted small">{s.desc}{s.dmg && <> <span style={{ color: DMG_COLOR[s.dmg] }}>[{DMG_LABEL[s.dmg]}]</span></>}</div>
+          <div key={s.id} className={'card' + (locked ? ' lockd' : '')} onClick={() => setOpen(open === s.id ? null : s.id)}>
+            <div className="skill">
+              <img src={iconURL(s.icon, s.col)} alt="" />
+              <div className="grow">
+                <div className="row"><b>{i + 1}. {s.name}</b><span className="muted small">{locked ? `Nível ${s.lv}` : `${skillMpCost(s.mp, g.level)} MP · ${s.cd}s`}</span></div>
+                <div className="muted small">{s.desc}{s.dmg && <> <span style={{ color: DMG_COLOR[s.dmg] }}>[{DMG_LABEL[s.dmg]}]</span></>}</div>
+              </div>
+              {!locked && <button className={'mini' + (auto ? ' on' : '')} onClick={(e) => { e.stopPropagation(); g.toggleAuto(s.id); }}>{auto ? 'AUTO' : 'MAN'}</button>}
             </div>
-            {!locked && <button className={'mini' + (auto ? ' on' : '')} onClick={() => g.toggleAuto(s.id)}>{auto ? 'AUTO' : 'MAN'}</button>}
+            {open === s.id && <div className="tip">{skillDetails(s, g.derived, g.level).map((l) => <span key={l} className={l.startsWith('✔') ? 'good' : l.startsWith('✘') ? 'bad' : ''}>{l}</span>)}</div>}
           </div>
         );
       })}
+      <b>Manobra (automática)</b>
+      <div className={'card' + (manLocked ? ' lockd' : '')} onClick={() => setOpen(open === 'man' ? null : 'man')}>
+        <div className="skill"><img src={iconURL(man.icon, man.col)} alt="" />
+          <div className="grow"><div className="row"><b>{man.name}</b><span className="muted small">{manLocked ? `Nível ${man.lv}` : `${man.cd}s`}</span></div><div className="muted small">{man.desc}</div></div>
+          {!manLocked && <button className={'mini' + (manAuto ? ' on' : '')} onClick={(e) => { e.stopPropagation(); g.char.skillAuto.maneuver = !manAuto; g.emit(); }}>{manAuto ? 'AUTO' : 'OFF'}</button>}</div>
+        {open === 'man' && <div className="tip"><span>Usada pela IA só em emergência (cercado, HP baixo ou beco). Alcance máx. {man.dist} tiles, com animação, recarga de {man.cd}s. Nunca atravessa parede nem inimigo: se algo bloquear, o movimento para.</span></div>}
+      </div>
       <b>Passivas</b>
       {cls.passives.map((p) => (
         <div key={p.id} className={'card' + (p.lv > g.level ? ' lockd' : '')}>
-          <div className="row"><b>{p.name}</b><span className="muted small">{p.lv > g.level ? `Nv ${p.lv}` : 'Ativa'}</span></div>
+          <div className="row"><b>{p.name}</b><span className="muted small">{p.lv > g.level ? `Nível ${p.lv}` : 'Ativa'}</span></div>
           <div className="muted small">{p.desc}</div>
         </div>
       ))}
+      <b>Status (efeitos)</b>
+      <div className="card legend">{(Object.keys(STATUS_INFO) as (keyof typeof STATUS_INFO)[]).map((k) => <div key={k}><b>{STATUS_INFO[k].name}:</b> <span className="muted">{STATUS_INFO[k].text}</span></div>)}</div>
     </div>
   );
 }
@@ -142,7 +159,7 @@ function ItemCard({ it, eq, children }: { it: Item; eq?: Item; children?: React.
     <div className="card item" style={{ borderColor: RARITY_COLOR[it.rarity] }}>
       <div className="row"><b style={{ color: RARITY_COLOR[it.rarity] }}>{itemName(it)}</b><span className="muted small">{RARITY_LABEL[it.rarity]} · {SLOT_LABEL[it.slot]} · iLv {it.ilvl}</span></div>
       <ItemLines it={it} /><Dur it={it} />
-      {eq && <div className={'small ' + (diff >= 0 ? 'up' : 'down')}>{diff >= 0 ? '▲ melhor' : '▼ pior'} que o equipado</div>}
+      {eq && <><div className={'small ' + (diff >= 0 ? 'up' : 'down')}>{diff >= 0 ? '▲ melhor' : '▼ pior'} que o equipado</div><Compare it={it} eq={eq} /></>}
       {children}
     </div>
   );

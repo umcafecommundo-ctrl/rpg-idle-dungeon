@@ -33,6 +33,13 @@ npm run sim -- 40 45   # tabela de balanceamento no terminal: nível 40, 45 s po
 - **Início**: abertura pulável (~40 s) → escolha de classe com prévia animada → visão do poder final → caçada com dicas contextuais, 7 missões encadeadas (Espada do Iniciante, mini-chefe Rato Albino com armadura rara garantida, volta à cidade com surpresa, baú trancado do nível 10), recompensa a cada nível 2–10, atividades liberadas por nível, área trancada com silhuetas “???” e teaser de recompensa offline de 1 h. Tudo em `src/data/onboarding.ts`.
 - XP dos níveis iniciais foi reduzido para o nível 10 sair em ~5–9 min (meça com a classe: ver `EARLY_FACTOR` em `formulas.ts`).
 
+## Rodada 4: IA sem teleporte, UX, eventos e retenção
+- **IA**: removido todo teleporte. As classes têm uma **Manobra** real (Salto, Investida, Impulso Arcano, Passo Sombrio, Empurrão Sagrado; nível 12) — o personagem anda em alta velocidade até 2,6 tiles e para ao bater em parede ou mob. Reação antecipada (tempo até o contato), corredor livre e área alcançável na nota de posição, **modo cercado** (luta para abrir caminho) e log dos motivos no debug. Teste: `npm run test:ai` (100 combates, falha se a posição saltar mais que a velocidade permitida).
+- **UX**: barra fixa “Próximo objetivo”, bolinhas vermelhas nas abas, 1 ação recomendada com seta/brilho, tooltips por toque (números, tipos fortes/fracos, status), comparação com setas verde/vermelha, botão “Equipar melhores itens”, botões de 44 px, sons de clique.
+- **Eventos** (`src/data/events.json`): mob dourado, invasão com barra de progresso, chefe errante com aviso, missões diárias + login de 7 dias, baú do cristal com timer, bônus de fim de semana, conquistas com títulos e bônus, bestiário com bônus por tipo, central de avisos e “dobrar ganhos offline” (ponto de integração em `src/engine/ads.ts`, sem anúncio real).
+- **Progressão**: `docs/progressao.md` (gerado por `npm run prog`) traz os desbloqueios e o tempo estimado do nível 1 ao 50.
+- Fase 2 (não feito): chuva de tesouro, fenda dimensional, chefe mundial com ranking, eventos sazonais e passe de temporada.
+
 ## Estrutura
 ```
 src/data/      classes.ts  mobs.ts  maps.ts  items.ts  types.ts   ← tudo que se balanceia

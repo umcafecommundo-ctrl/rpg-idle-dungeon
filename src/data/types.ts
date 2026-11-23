@@ -86,8 +86,11 @@ export interface ClassDef {
   ranged: boolean;
   basic: { sc: Stat; dmg: DmgType; interval: number; vfx: Vfx };
   skills: Skill[]; passives: Passive[]; talents: TalentBranch[];
+  maneuver: Maneuver;   // skill de mobilidade automática (usada só pela IA, em emergências)
   sprite: SpriteCfg;
 }
+/** Manobra: movimento rápido REAL (sem teleporte): anda em linha reta, para em parede/mob, alcance curto. */
+export interface Maneuver { name: string; lv: number; cd: number; dist: number; kind: 'jump' | 'dash' | 'push'; icon: IconKey; col: string; desc: string; push?: number }
 
 export interface MobDef {
   id: string; name: string; kind: MobKind;
@@ -109,7 +112,7 @@ export interface MapDef {
 export type Activity = 'solo' | 'horda' | 'chefe' | 'dungeon' | 'party';
 export const ACTIVITIES: Activity[] = ['solo', 'horda', 'chefe', 'dungeon', 'party'];
 export const ACTIVITY_LABEL: Record<Activity, string> = {
-  solo: 'Caçada solo', horda: 'Hordas', chefe: 'Chefes', dungeon: 'Dungeon', party: 'Party',
+  solo: 'Caçada solo', horda: 'Hordas', chefe: 'Chefes', dungeon: 'Masmorra', party: 'Grupo',
 };
 export const ACTIVITY_DESC: Record<Activity, string> = {
   solo: 'Poucos mobs por vez. Farm de XP equilibrado.',

@@ -14,13 +14,30 @@ export const newOnboard = (): Onboard => ({ hints: [], quest: 0, progress: 0, le
 /** Saves antigos (sem onboarding) são tratados como tutorial concluído. */
 export const doneOnboard = (): Onboard => ({ hints: ['start', 'skill', 'potion', 'item', 'levelup', 'town', 'death', 'boss', 'maps'], quest: 99, progress: 0, levelRewards: [2, 3, 4, 5, 6, 7, 8, 9, 10], firstTown: true, chestOpen: true, offlineGift: 'claimed', started: 0 });
 
+export interface DailyMission { id: string; title: string; type: string; n: number; progress: number; kind?: string; claimed: boolean; reward: import('../data/events').Reward }
+export interface Meta {
+  daily: { day: string; missions: DailyMission[]; chestClaimed: boolean; streak: number; loginDay: string; loginClaimed: boolean };
+  events: { nextInvasion: number; nextWanderer: number; wanderer: { mapId: string; id: string; until: number; spawned: boolean } | null };
+  timerChest: { readyAt: number };
+  notes: { id: number; t: number; text: string; read: boolean }[];
+  ach: string[]; title: string; bestiary: Record<string, number>;
+  seen: { skills: number; maps: number };
+  extra: { goldEarned: number; golden: number; invasions: number; wanderers: number; dailyDone: number };
+}
+export const newMeta = (level = 1): Meta => ({
+  daily: { day: '', missions: [], chestClaimed: false, streak: 0, loginDay: '', loginClaimed: false },
+  events: { nextInvasion: Date.now() + 150e3, nextWanderer: Date.now() + 420e3, wanderer: null },
+  timerChest: { readyAt: Date.now() + 15 * 60e3 }, notes: [], ach: [], title: '', bestiary: {},
+  seen: { skills: level, maps: level }, extra: { goldEarned: 0, golden: 0, invasions: 0, wanderers: 0, dailyDone: 0 },
+});
+
 export interface SaveData {
   v: 1; ts: number; active: string; chars: Record<string, CharSave>;
   gold: number; inventory: Item[]; potions: { hp: number; mp: number };
   settings: { autoPot: boolean; hpTh: number; mpTh: number; autoSell: 'none' | 'comum' | 'raro'; sound: boolean; ai: boolean };
   gems: number; cons: Record<string, number>; boosts: Record<string, number>;
   shop: { win: number; bought: string[] }; inTown: boolean;
-  onboard: Onboard;
+  onboard: Onboard; meta: Meta;
   mapId: string; activity: Activity; floor: number; bestFloor: Record<string, number>;
   rebirths: number; mercs: (string | null)[];
   stats: { kills: number; deaths: number; bosses: number; items: number };
@@ -34,7 +51,7 @@ export function newSave(classId: string): SaveData {
   return {
     v: 1, ts: Date.now(), active: classId, chars: { [classId]: newChar() }, gold: 100, inventory: [], potions: { hp: 5, mp: 3 },
     settings: { autoPot: true, hpTh: 0.4, mpTh: 0.25, autoSell: 'comum', sound: true, ai: true },
-    gems: 0, cons: {}, boosts: {}, shop: { win: 0, bought: [] }, inTown: false, onboard: newOnboard(),
+    gems: 0, cons: {}, boosts: {}, shop: { win: 0, bought: [] }, inTown: false, onboard: newOnboard(), meta: newMeta(),
     mapId: 'esgoto', activity: 'solo', floor: 1, bestFloor: {}, rebirths: 0, mercs: ['cavaleiro', 'clerigo', 'mago'],
     stats: { kills: 0, deaths: 0, bosses: 0, items: 0 },
   };
@@ -55,7 +72,7 @@ export function validate(o: unknown): SaveData {
   const s = o as SaveData;
   if (!s || typeof s !== 'object' || s.v !== 1 || !CLASS_BY_ID[s.active] || !s.chars || typeof s.chars !== 'object') throw new Error('Save inválido');
   const base = newSave(s.active);
-  const out: SaveData = { ...base, ...s, settings: { ...base.settings, ...s.settings }, stats: { ...base.stats, ...s.stats }, potions: { ...base.potions, ...s.potions }, cons: { ...s.cons }, boosts: { ...s.boosts }, shop: { ...base.shop, ...s.shop }, onboard: s.onboard ? { ...newOnboard(), ...s.onboard } : doneOnboard() };
+  const out: SaveData = { ...base, ...s, settings: { ...base.settings, ...s.settings }, stats: { ...base.stats, ...s.stats }, potions: { ...base.potions, ...s.potions }, cons: { ...s.cons }, boosts: { ...s.boosts }, shop: { ...base.shop, ...s.shop }, onboard: s.onboard ? { ...newOnboard(), ...s.onboard } : doneOnboard(), meta: { ...newMeta(Math.max(1, ...Object.values(s.chars ?? {}).map((c) => (c as CharSave).level ?? 1))), ...(s.meta ?? {}) } };
   for (const id of Object.keys(out.chars)) {
     if (!CLASS_BY_ID[id]) { delete out.chars[id]; continue; }
     out.chars[id] = { ...newChar(), ...out.chars[id], alloc: { ...zeroStats(), ...out.chars[id].alloc } };

@@ -23,7 +23,7 @@ const Tabs = ({ tabs, v, set }: { tabs: [string, string][]; v: string; set: (s: 
 );
 
 /** Diferença de atributos entre o item novo e o equipado: verde = melhor, vermelho = pior. */
-function Compare({ it, eq }: { it: Item; eq?: Item }) {
+export function Compare({ it, eq }: { it: Item; eq?: Item }) {
   const a = effMods(it), b = eq ? effMods(eq) : {};
   const rows: { l: string; d: number; p: boolean }[] = [];
   for (const [k, l, p] of MOD_LABEL) { const d = ((a[k] as number) ?? 0) - ((b[k] as number) ?? 0); if (Math.abs(d) > (p ? 0.0005 : 0.5)) rows.push({ l, d, p }); }
@@ -73,7 +73,7 @@ export function ServiceSheet({ id }: { id: string }) {
 
 const Soon = ({ id }: { id: string }) => (
   <div className="card"><b>Em construção</b>
-    <div className="muted">{{ banco: 'O Banco guardará itens e ouro, expandindo seu inventário.', magia: 'A Loja de Magia venderá livros de skill, runas e encantamentos contra tipos de mob.', joalheiro: 'O Joalheiro venderá anéis e amuletos e permitirá criar e encaixar gemas.' }[id]}</div>
+    <div className="muted">{{ banco: 'O Banco guardará itens e ouro, expandindo seu inventário.', magia: 'A Loja de Magia venderá livros de habilidade, runas e encantamentos contra tipos de mob.', joalheiro: 'O Joalheiro venderá anéis e amuletos e permitirá criar e encaixar gemas.' }[id]}</div>
     <div className="muted small">Este estabelecimento será ativado numa próxima atualização.</div></div>
 );
 
@@ -232,7 +232,7 @@ function Tavern() {
   const g = useGame(); const sv = g.save;
   return (
     <div className="stack">
-      <div className="card"><b>Mercenários</b><div className="muted small">Eles lutam ao seu lado na atividade <b>Party</b>. Escolha até 3 classes.</div>
+      <div className="card"><b>Mercenários</b><div className="muted small">Eles lutam ao seu lado na atividade <b>Grupo</b>. Escolha até 3 classes.</div>
         {[0, 1, 2].map((i) => (
           <div className="row" key={i}><span>Vaga {i + 1}</span><span className="grow" />
             <select value={sv.mercs[i] ?? ''} onChange={(e) => g.setMerc(i, e.target.value || null)}>

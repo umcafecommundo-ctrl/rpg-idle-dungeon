@@ -7,7 +7,9 @@
     "dev": "vite --host",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview --host",
-    "sim": "tsx src/engine/simCli.ts"
+    "sim": "tsx src/engine/simCli.ts",
+    "test:ai": "tsx src/engine/aiTest.ts",
+    "prog": "tsx src/engine/progTable.ts"
   },
   "dependencies": {
     "react": "^18.3.1",

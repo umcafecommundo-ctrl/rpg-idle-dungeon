@@ -16,15 +16,20 @@ import { MAP_BY_ID as MAPS_BY_ID } from '../data/maps';
 import { addMods } from './formulas';
 import { blacksmithStock, buyPrice, effMods, equippedList, repairCost, sellPrice, stockWindow } from './shop';
 import { Town } from './town';
+import { EVENTS, dayKey, weekendBonus, type Reward } from '../data/events';
+import { MOB_BY_ID, MOBS, BOSSES, MINIBOSSES, WANDERERS } from '../data/mobs';
+import { KIND_LABEL } from '../data/types';
+import { showRewardedAd } from './ads';
 import { ACTIVITY_MIN_LEVEL, CHEST_LEVEL, HINTS, LEVEL_REWARDS, MINIBOSS_QUEST, OFFLINE_TEASER_SECONDS, QUESTS, VISION, type Hint, type LevelReward, type Quest, type QuestReward } from '../data/onboarding';
 import { RARITY_COLOR } from '../data/types';
 
+const fmtN = (n: number) => (n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1e4 ? (n / 1e3).toFixed(1) + 'k' : String(Math.round(n)));
 export const OFFLINE_CAP = 8 * 3600;
 export const OFFLINE_EFFICIENCY = 0.85;
 
 export interface OfflineSummary {
   secs: number; capped: boolean; xp: number; gold: number; kills: number; fromLevel: number; toLevel: number;
-  items: Record<Rarity, number>; sold: number; deaths: number; best?: Item; sellGold: number; gift?: string;
+  items: Record<Rarity, number>; sold: number; deaths: number; best?: Item; sellGold: number; gift?: string; doubled?: boolean;
 }
 
 type Listener = () => void;
@@ -42,6 +47,7 @@ export class Game {
   private mercCache = new Map<string, PartyMember>();
   scene: 'town' | 'field' = 'field';
   debugAi = false;
+  private evT = 0; private invHandled = false;
   surprise = false;                       // diálogo da primeira visita à cidade
   vision: { b: Battle; t: number; cast: boolean; classId: string } | null = null;
   banner: { text: string; sub: string; t: number } | null = null;
@@ -68,14 +74,14 @@ export class Game {
       this.scene = s.inTown ? 'town' : 'field';
       audio.setEnabled(s.settings.sound); audio.setScene(s.inTown ? 'cidade' : s.mapId);
       const elapsed = (Date.now() - s.ts) / 1000;
-      this.tickBoosts(Math.min(elapsed, OFFLINE_CAP));
+      this.tickBoosts(Math.min(elapsed, OFFLINE_CAP)); this.ensureDaily(); this.checkAchievements();
       if (elapsed > 60 && !s.inTown) this.applyOffline(elapsed);
     }
     this.emit();
   }
   newGame(classId: string) {
     this.save = newSave(classId); this.scene = 'field'; audio.setEnabled(true); audio.setScene('esgoto');
-    this.refreshDerived(); this.startBattle(); this.startVision(classId); this.persist(); this.emit();
+    this.refreshDerived(); this.startBattle(); this.ensureDaily(); this.startVision(classId); this.persist(); this.emit();
   }
   subscribe = (l: Listener) => { this.listeners.add(l); return () => { this.listeners.delete(l); }; };
   getVersion = () => this.version;
@@ -95,14 +101,14 @@ export class Game {
   }
   derivedFor(classId: string): Derived {
     const c = this.save.chars[classId] ?? newChar();
-    return derive({ classId, level: c.level, alloc: c.alloc, talents: c.talents, gear: this.gearMods(c), rebirths: this.save.rebirths });
+    return derive({ classId, level: c.level, alloc: c.alloc, talents: c.talents, gear: [...this.gearMods(c), this.metaMods()], rebirths: this.save.rebirths });
   }
   refreshDerived() {
     this.derived = this.derivedFor(this.save.active);
     this.bag.hp = this.save.potions.hp; this.bag.mp = this.save.potions.mp;
     this.bag.on = this.save.settings.autoPot; this.bag.hpTh = this.save.settings.hpTh; this.bag.mpTh = this.save.settings.mpTh;
     if (this.battle) {
-      this.battle.cfg.xpBonus = this.derived.mods.xpPct ?? 0; this.battle.cfg.goldBonus = this.derived.mods.goldPct ?? 0; this.battle.cfg.dropBonus = this.derived.mods.dropPct ?? 0;
+      { const wb = weekendBonus(); this.battle.cfg.xpBonus = (this.derived.mods.xpPct ?? 0) + (wb?.xp ?? 0); this.battle.cfg.goldBonus = this.derived.mods.goldPct ?? 0; this.battle.cfg.dropBonus = (this.derived.mods.dropPct ?? 0) + (wb?.drop ?? 0); }
       this.battle.playerLevel = this.char.level;
       this.battle.applyDerived(this.battle.player, this.derived, this.char.skillAuto);
     }
@@ -134,9 +140,12 @@ export class Game {
     this.battle = new Battle({
       rng: mulberry32((Date.now() ^ 0x9e3779b9) >>> 0), mapId: this.save.mapId, activity: this.save.activity, floor: this.save.activity === 'dungeon' ? this.save.floor : 1,
       playerLevel: this.char.level, party, fx: true, bag: this.bag,
-      xpBonus: this.derived.mods.xpPct ?? 0, goldBonus: this.derived.mods.goldPct ?? 0, dropBonus: this.derived.mods.dropPct ?? 0,
+      xpBonus: (this.derived.mods.xpPct ?? 0) + (weekendBonus()?.xp ?? 0), goldBonus: this.derived.mods.goldPct ?? 0, dropBonus: (this.derived.mods.dropPct ?? 0) + (weekendBonus()?.drop ?? 0),
+      golden: this.scene === 'field' && this.char.level >= EVENTS.goldenMob.minLevel && this.save.activity !== 'chefe' ? EVENTS.goldenMob : undefined,
     });
     this.battle.debug = this.debugAi;
+    { const w = this.save.meta.events.wanderer; if (w && w.spawned && w.mapId === this.save.mapId && Date.now() < w.until && this.scene === 'field') this.battle.miniQueue.push(w.id); }
+    this.invHandled = false;
     { const q = this.quest; if (q?.id === MINIBOSS_QUEST && this.scene === 'field') this.battle.miniQueue.push('rato_albino'); }
     this.battle.layout = generateLayout(this.save.mapId, (Date.now() ^ 0x51ed) >>> 0);
     this.seen = { xp: 0, gold: 0, kills: 0, elites: 0, bosses: 0, floors: 0, deaths: 0 };
@@ -154,7 +163,7 @@ export class Game {
     }
     if (this.banner) { this.banner.t -= dtReal; if (this.banner.t <= 0) { this.banner = null; this.emit(); } }
     this.boostT += dtReal;
-    if (this.boostT >= 1) { this.tickBoosts(this.boostT); this.boostT = 0; }
+    if (this.boostT >= 1) { this.tickBoosts(this.boostT); this.boostT = 0; this.evT++; this.tickEvents(); if (this.evT % 30 === 0) this.ensureDaily(); }
     for (const t of this.toasts) t.t -= dtReal;
     if (this.toasts.length && this.toasts[0].t <= 0) this.toasts = this.toasts.filter((t) => t.t > 0);
     this.saveT += dtReal;
@@ -170,7 +179,7 @@ export class Game {
   private afterStep() {
     const b = this.battle, a = b.acc, s = this.seen, sv = this.save;
     if (a.xp !== s.xp || a.gold !== s.gold) {
-      sv.gold += Math.round(a.gold - s.gold); const dx = a.xp - s.xp; s.xp = a.xp; s.gold = a.gold;
+      sv.gold += Math.round(a.gold - s.gold); sv.meta.extra.goldEarned += Math.max(0, a.gold - s.gold); const dx = a.xp - s.xp; s.xp = a.xp; s.gold = a.gold;
       this.gainXp(dx);
     }
     if (a.kills !== s.kills) { sv.stats.kills += a.kills - s.kills; s.kills = a.kills; }
@@ -188,6 +197,7 @@ export class Game {
     }
     if (b.killLog.length) { for (const id of b.killLog) this.onKillId(id); b.killLog.length = 0; }
     if (b.sfx.length) { for (const f of b.sfx) audio.sfx(f); b.sfx.length = 0; }
+    if (b.invasion?.done && !this.invHandled) { this.invHandled = true; this.finishInvasion(b.invasion.failed); }
     this.checkHints();
     if (sv.activity === 'dungeon' && sv.floor !== b.floor) {
       sv.floor = b.floor; sv.bestFloor[sv.mapId] = Math.max(sv.bestFloor[sv.mapId] ?? 1, b.floor);
@@ -306,6 +316,204 @@ export class Game {
   }
 
 
+
+  // ───────────── metas: diárias, eventos, conquistas, bestiário, avisos ─────────────
+  get meta() { return this.save.meta; }
+  notify(text: string, toast = true) {
+    const m = this.meta; m.notes.unshift({ id: Date.now() + Math.floor(Math.random() * 1000), t: Date.now(), text, read: false }); if (m.notes.length > 30) m.notes.length = 30;
+    if (toast) this.toast(text, '#ffd24a');
+  }
+  unreadNotes() { return this.meta.notes.filter((n) => !n.read).length; }
+  markNotesRead() { this.meta.notes.forEach((n) => { n.read = true; }); this.emit(); }
+
+  /** Concede uma recompensa descrita em JSON (goldLv = ouro por nível). */
+  grantR(r: Reward, label: string) {
+    const sv = this.save, lv = Math.max(1, this.char.level); const parts: string[] = [];
+    const gold = r.gold ?? (r.goldLv ? Math.round(r.goldLv * lv + 20) : 0);
+    if (gold) { sv.gold += gold; sv.meta.extra.goldEarned += gold; parts.push(`+${fmtN(gold)} ouro`); }
+    if (r.gems) { sv.gems += r.gems; parts.push(`+${r.gems} 💎`); }
+    if (r.hp) { this.bag.hp += r.hp; sv.potions.hp = this.bag.hp; parts.push(`+${r.hp} poção HP`); }
+    if (r.mp) { this.bag.mp += r.mp; sv.potions.mp = this.bag.mp; parts.push(`+${r.mp} poção MP`); }
+    if (r.cons) for (const id in r.cons) { sv.cons[id] = (sv.cons[id] ?? 0) + r.cons[id]; parts.push(`+${r.cons[id]} ${CONS_BY_ID[id]?.name ?? id}`); }
+    if (r.item) {
+      let it = rollItem(Math.random, lv, r.item === 'tier2' ? 2 : 1, undefined, 0.5);
+      if (r.item === 'tier2') for (let i = 0; i < 60 && (it.rarity === 'comum' || it.rarity === 'raro'); i++) it = rollItem(Math.random, lv, 2, undefined, 1);
+      this.receiveItem(it, false); if (!Object.values(this.char.equipped).includes(it) && !sv.inventory.includes(it) && sv.inventory.length < MAX_INV) sv.inventory.push(it);
+      parts.push(it.name);
+    }
+    this.toast(`${label}: ${parts.join(', ')}`, '#ffe9b0'); audio.sfx('quest'); this.refreshDerived(); this.emit();
+  }
+
+  // ── diárias + sequência de login ──
+  ensureDaily() {
+    const d = this.meta.daily; const today = dayKey();
+    if (d.day === today) return;
+    const y = new Date(); y.setDate(y.getDate() - 1);
+    d.streak = d.loginDay === dayKey(y) ? (d.streak % 7) + 1 : 1; // sequência: 1..7 e recomeça
+    d.loginDay = today; d.loginClaimed = false; d.day = today; d.chestClaimed = false;
+    // 4 missões sorteadas pela data (iguais para todo mundo no mesmo dia)
+    const rnd = mulberry32(today.split('-').reduce((a, x) => a * 31 + +x, 7));
+    const pool = EVENTS.daily.pool.slice(); const kinds = Object.keys(KIND_LABEL);
+    d.missions = [];
+    for (let i = 0; i < EVENTS.daily.missionCount && pool.length; i++) {
+      const def = pool.splice(Math.floor(rnd() * pool.length), 1)[0];
+      const kind = def.type === 'killKind' ? kinds[Math.floor(rnd() * kinds.length)] : undefined;
+      d.missions.push({ id: def.id, title: def.title.replace('{n}', String(def.n)).replace('{kind}', kind ? KIND_LABEL[kind as keyof typeof KIND_LABEL] : ''), type: def.type, n: def.n, progress: 0, kind, claimed: false, reward: def.reward });
+    }
+    this.notify('Novas missões diárias e prêmio de login disponíveis!');
+  }
+  dailyProgress(type: string, n = 1, kind?: string) {
+    const d = this.save?.meta.daily; if (!d) return;
+    for (const m of d.missions) if (m.type === type && !m.claimed && m.progress < m.n && (type !== 'killKind' || m.kind === kind)) m.progress = Math.min(m.n, m.progress + n);
+  }
+  claimMission(i: number) {
+    const m = this.meta.daily.missions[i]; if (!m || m.claimed || m.progress < m.n) return;
+    m.claimed = true; this.meta.extra.dailyDone++; this.grantR(m.reward, 'Missão diária'); this.checkAchievements();
+  }
+  dailyChestReady() { const d = this.meta.daily; return !d.chestClaimed && d.missions.length > 0 && d.missions.every((m) => m.claimed); }
+  claimDailyChest() { if (!this.dailyChestReady()) return; this.meta.daily.chestClaimed = true; this.grantR(EVENTS.daily.chest, 'Baú diário'); }
+  claimLogin() {
+    const d = this.meta.daily; if (d.loginClaimed) return;
+    d.loginClaimed = true; const r = EVENTS.daily.login[(d.streak - 1) % 7]; this.grantR(r.reward, `Login dia ${d.streak}`);
+  }
+
+  // ── baú do cristal (timer) ──
+  timerChest() {
+    const t = EVENTS.timerChest, r = this.meta.timerChest.readyAt, now = Date.now();
+    const count = now < r ? 0 : Math.min(t.maxStack, 1 + Math.floor((now - r) / (t.intervalMin * 60e3)));
+    return { count, readyIn: Math.max(0, r - now) };
+  }
+  claimTimerChest() {
+    const tc = this.timerChest(); if (!tc.count) return;
+    const t = EVENTS.timerChest;
+    for (let i = 0; i < tc.count; i++) this.grantR({ ...t.reward, item: Math.random() < (t.reward.itemChance ?? 0) ? 'tier1' : undefined }, 'Baú do cristal');
+    this.meta.timerChest.readyAt = Date.now() + t.intervalMin * 60e3;
+  }
+
+  // ── eventos dinâmicos ──
+  private rand(a: number, b: number) { return a + Math.random() * (b - a); }
+  private tickEvents() {
+    if (this.scene !== 'field' || this.vision || !this.battle) return;
+    const now = Date.now(), ev = this.meta.events, b = this.battle, lv = this.char.level;
+    const bossAlive = b.actors.some((a) => a.mob?.boss && !a.dead);
+    const inv = EVENTS.invasion;
+    if (now >= ev.nextInvasion) {
+      if (lv >= inv.minLevel && !b.invasion && !bossAlive && ['solo', 'horda', 'party'].includes(this.save.activity)) {
+        b.startInvasion(inv.total, inv.timeLimit); this.invHandled = false; this.notify('Invasão de monstros! Derrote todos antes que o tempo acabe.', false);
+        ev.nextInvasion = now + this.rand(inv.intervalMin, inv.intervalMax) * 1000;
+      } else ev.nextInvasion = now + 30e3;
+    }
+    const wb = EVENTS.wanderingBoss;
+    if (now >= ev.nextWanderer && !ev.wanderer) {
+      if (lv >= wb.minLevel) {
+        const maps = this.mapsUnlockedList(); const m = maps[Math.floor(Math.random() * maps.length)]; const def = wb.byMap[m.id];
+        if (def) { ev.wanderer = { mapId: m.id, id: def.id, until: now + wb.durationSec * 1000, spawned: false }; this.notify(`⚠ ${def.text} (${Math.round(wb.durationSec / 60)} min)`); audio.sfx('boss'); this.showBanner('Chefe errante!', def.text); }
+      }
+      ev.nextWanderer = now + this.rand(wb.intervalMin, wb.intervalMax) * 1000;
+    }
+    const w = ev.wanderer;
+    if (w) {
+      if (now > w.until && !w.spawned) { ev.wanderer = null; this.notify('O chefe errante foi embora…', false); }
+      else if (!w.spawned && w.mapId === this.save.mapId && !bossAlive && !b.invasion) { w.spawned = true; b.miniQueue.push(w.id); }
+      else if (w.spawned && now > w.until + 600e3) ev.wanderer = null;
+    }
+  }
+  private finishWanderer() {
+    const ev = this.meta.events; if (!ev.wanderer) return;
+    ev.wanderer = null; this.meta.extra.wanderers++;
+    this.grantR(EVENTS.wanderingBoss.reward, 'Chefe errante derrotado'); this.showBanner('Chefe errante derrotado!', 'Recompensa especial concedida'); this.checkAchievements();
+  }
+  private finishInvasion(failed: boolean) {
+    const r = EVENTS.invasion.reward, b = this.battle;
+    if (failed) { this.grantR({ goldLv: (r.goldLv ?? 0) * 0.25 }, 'Invasão (parcial)'); this.showBanner('A invasão recuou…', 'Tempo esgotado — recompensa parcial'); }
+    else {
+      this.meta.extra.invasions++; this.dailyProgress('invasion');
+      const xp = (xpToNext(this.char.level) / (40 + this.char.level * 1.2)) * (r.xpMult ?? 0) * 3;
+      this.grantR({ ...r }, 'Invasão repelida'); this.gainXp(xp); this.showBanner('Invasão repelida!', 'Recompensa recebida'); this.checkAchievements();
+    }
+    setTimeout(() => { if (b === this.battle) b.invasion = null; }, 1500);
+  }
+  invasionState() { const i = this.battle?.invasion; return i && !i.done ? i : null; }
+
+  // ── conquistas e bestiário ──
+  statValue(stat: string): number {
+    const sv = this.save, x = sv.meta.extra;
+    switch (stat) {
+      case 'kills': return sv.stats.kills; case 'level': return this.maxLevelEver; case 'bosses': return sv.stats.bosses;
+      case 'goldEarned': return x.goldEarned; case 'items': return sv.stats.items; case 'golden': return x.golden; case 'invasions': return x.invasions;
+      case 'wanderers': return x.wanderers; case 'dailyDone': return x.dailyDone; case 'deaths': return sv.stats.deaths; case 'bestiary': return this.bestiaryCompleted();
+      default: return 0;
+    }
+  }
+  checkAchievements() {
+    const m = this.meta; let any = false;
+    for (const a of EVENTS.achievements) if (!m.ach.includes(a.id) && this.statValue(a.stat) >= a.n) {
+      m.ach.push(a.id); any = true; if (!m.title) m.title = a.title;
+      this.notify(`🏆 Conquista: ${a.title} — ${a.desc}`); audio.sfx('quest'); this.showBanner('Conquista desbloqueada!', a.title);
+    }
+    if (any) { this.refreshDerived(); this.emit(); }
+  }
+  bestiaryList() { return [...MOBS, ...BOSSES, ...MINIBOSSES, ...WANDERERS]; }
+  bestiaryDone(id: string) { const d = MOB_BY_ID[id]; if (!d) return false; return (this.meta.bestiary[id] ?? 0) >= (d.boss ? EVENTS.bestiary.completeKillsBoss : EVENTS.bestiary.completeKills); }
+  bestiaryCompleted() { return this.bestiaryList().filter((d) => this.bestiaryDone(d.id)).length; }
+  metaMods(): Mods {
+    const m: Mods = {}; if (!this.save?.meta) return m;
+    for (const a of EVENTS.achievements) if (this.save.meta.ach.includes(a.id)) addMods(m, a.mods);
+    for (const d of this.bestiaryList()) if (this.bestiaryDone(d.id)) addMods(m, { vs: { [d.kind]: d.boss ? EVENTS.bestiary.bonusPerBoss : EVENTS.bestiary.bonusPerEntry } });
+    return m;
+  }
+
+  // ── indicadores de novidade, ação recomendada e próximo objetivo ──
+  private itemScoreEff = (it: Item) => itemScore({ ...it, mods: effMods(it) });
+  hasBetterItem(): boolean {
+    for (const it of this.save.inventory) { const cur = this.char.equipped[it.slot]; if (!cur || this.itemScoreEff(it) > this.itemScoreEff(cur) * 1.0001) return true; }
+    return false;
+  }
+  badges() {
+    const sv = this.save, lv = this.char.level, m = sv.meta, d = m.daily;
+    const newSkill = this.cls.skills.some((s) => s.lv > m.seen.skills && s.lv <= lv) || (this.cls.maneuver.lv > m.seen.skills && this.cls.maneuver.lv <= lv);
+    const newMap = MAPS.some((mp) => mp.minLv > m.seen.maps && mp.minLv <= this.maxLevelEver) || Object.values(ACTIVITY_MIN_LEVEL).some((l) => l > m.seen.maps && l <= this.maxLevelEver);
+    return {
+      char: (!this.char.auto && this.freePoints() > 0) || this.talentPointsLeft() > 0,
+      skills: newSkill, inv: this.hasBetterItem(), maps: newMap,
+      town: this.townReady(),
+      metas: this.metasReady(),
+    };
+  }
+  townReady() { const ob = this.save.onboard; return (this.level >= CHEST_LEVEL && !ob.chestOpen) || this.surprise || this.quest?.goal.type === 'town'; }
+  metasReady() {
+    const d = this.meta.daily;
+    return d.missions.some((x) => !x.claimed && x.progress >= x.n) || !d.loginClaimed || this.dailyChestReady() || this.timerChest().count > 0 || this.unreadNotes() > 0;
+  }
+  markSeen(what: 'skills' | 'maps') { const s = this.meta.seen; if (what === 'skills') s.skills = this.char.level; else s.maps = this.maxLevelEver; this.emit(); }
+  /** No máximo UMA ação recomendada por vez. */
+  recommended(): 'inv' | 'char' | 'metas' | 'town' | 'maps' | null {
+    const b = this.badges();
+    if (b.inv) return 'inv'; if (b.char) return 'char'; if (b.metas) return 'metas'; if (b.town) return 'town'; if (b.maps) return 'maps';
+    return null;
+  }
+  nextGoal(): string {
+    const lv = this.char.level, q = this.quest;
+    if (q) { const pr = this.questProgress(); return `🎯 ${q.title}${pr.of > 1 ? ` (${pr.n}/${pr.of})` : ''}`; }
+    if (this.timerChest().count > 0) return '🎁 O baú do cristal está pronto! Abra em Metas.';
+    const opts: { lv: number; text: string }[] = [];
+    for (const m of MAPS) if (m.minLv > this.maxLevelEver) opts.push({ lv: m.minLv, text: `liberar ${m.name}` });
+    for (const s of this.cls.skills) if (s.lv > lv) opts.push({ lv: s.lv, text: `nova habilidade: ${s.name}` });
+    if (this.cls.maneuver.lv > lv) opts.push({ lv: this.cls.maneuver.lv, text: `manobra ${this.cls.maneuver.name}` });
+    if (lv < 100) opts.push({ lv: 100, text: 'liberar o Renascimento' });
+    opts.sort((a, b) => a.lv - b.lv);
+    const n = opts.find((o) => o.lv > lv);
+    if (n) return `🎯 Chegue ao nível ${n.lv} para ${n.text}`;
+    return '🎯 Continue evoluindo e renasça!';
+  }
+  weekendLabel() { return weekendBonus()?.label ?? null; }
+  /** Dobra os ganhos do resumo offline (ponto de integração de anúncio recompensado). */
+  async doubleOffline(): Promise<boolean> {
+    const s = this.summary; if (!s || s.doubled) return false;
+    const ok = await showRewardedAd('offline_double'); if (!ok) return false;
+    s.doubled = true; this.save.gold += Math.round(s.gold); this.gainXp(s.xp); s.xp *= 2; s.gold *= 2; this.toast('Ganhos offline dobrados!', '#ffe9b0'); audio.sfx('quest'); this.persist(); this.emit(); return true;
+  }
+
   // ───────────── onboarding: recompensas, missões, dicas ─────────────
   private grantItemKind(kind: string): Item | null {
     const lv = Math.max(3, this.char.level);
@@ -353,6 +561,26 @@ export class Game {
   }
   private checkQuestLevel() { const q = this.quest; if (q?.goal.type === 'level' && this.char.level >= q.goal.n) this.completeQuest(); }
   private onKillId(id: string) {
+    const meta = this.save.meta;
+    if (id === '__golden__') {
+      meta.extra.golden++; this.dailyProgress('golden');
+      if (Math.random() < EVENTS.goldenMob.gemChance) { this.save.gems++; this.toast('+1 💎 do mob dourado!', '#ffd040'); }
+      this.toast('Mob dourado capturado!', '#ffd040'); this.checkAchievements(); return;
+    }
+    const def = MOB_BY_ID[id];
+    // bestiário
+    const had = this.bestiaryDone(id);
+    meta.bestiary[id] = (meta.bestiary[id] ?? 0) + 1;
+    if (meta.bestiary[id] === 1 && def) this.toast(`Bestiário: ${def.name} registrado`, '#9ad0ff');
+    if (!had && this.bestiaryDone(id) && def) { this.toast(`Bestiário completo: ${def.name}! +${Math.round((def.boss ? EVENTS.bestiary.bonusPerBoss : EVENTS.bestiary.bonusPerEntry) * 100)}% de dano vs ${KIND_LABEL[def.kind]}`, '#6ae08a'); audio.sfx('quest'); this.refreshDerived(); }
+    // diárias
+    this.dailyProgress('kill');
+    if (def) { this.dailyProgress('killKind', 1, def.kind); if (def.boss) this.dailyProgress('boss'); }
+    // chefe errante
+    const w = meta.events.wanderer;
+    if (w && w.id === id && w.spawned) this.finishWanderer();
+    this.checkAchievements();
+    // missões do início
     const q = this.quest; if (!q) return; const g = q.goal;
     if (g.type === 'kill' || (g.type === 'killMob' && g.mob === id)) { this.save.onboard.progress++; if (this.save.onboard.progress >= g.n) this.completeQuest(); }
     else if (g.type === 'miniboss' && g.mob === id) this.completeQuest();
@@ -430,10 +658,11 @@ export class Game {
   }
   private onLevelUp(c: CharSave) {
     if (c.auto) c.alloc = autoAlloc(this.cls, 3, c.alloc);
+    this.dailyProgress('levelup');
     const r = LEVEL_REWARDS[c.level];
     if (r && !this.save.onboard.levelRewards.includes(c.level)) { this.save.onboard.levelRewards.push(c.level); this.grantLevelReward(c.level, r); }
     const sk = this.cls.skills.find((x) => x.lv === c.level);
-    if (sk) { this.toast(`Nova skill: ${sk.name}!`, sk.col); this.showBanner('Nova skill!', sk.name); }
+    if (sk) { this.toast(`Nova habilidade: ${sk.name}!`, sk.col); this.showBanner('Nova habilidade!', sk.name); }
   }
   private afterLevel() {
     if (this.battle) { this.battle.flash = 0.55; this.battle.sfx.push('levelup'); for (let i = 0; i < 3; i++) this.battle.addFx('spark', this.battle.player.x, this.battle.player.y, i, 0, 0.9 + i * 0.2, ['#ffe040', '#fff', '#ffb040'][i], 1.8 + i * 0.5); }
@@ -444,7 +673,7 @@ export class Game {
 
   // ───────────── itens ─────────────
   receiveItem(it: Item, live: boolean, sum?: OfflineSummary) {
-    const sv = this.save; sv.stats.items++;
+    const sv = this.save; sv.stats.items++; this.dailyProgress('items');
     const rIdx = RARITIES.indexOf(it.rarity);
     const sellIdx = sv.settings.autoSell === 'none' ? -1 : RARITIES.indexOf(sv.settings.autoSell);
     const eq = this.char.equipped[it.slot];

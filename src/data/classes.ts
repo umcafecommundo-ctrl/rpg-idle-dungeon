@@ -12,12 +12,13 @@ const sk = (i: number, s: Omit<Skill, 'lv'>): Skill => ({ ...s, lv: LV[i] });
 
 // ───────────────────────── Cavaleiro ─────────────────────────
 const knight: ClassDef = {
+  maneuver: { name: 'Investida', lv: 12, cd: 14, dist: 2.6, kind: 'dash', icon: 'shield', col: '#8fb4ff', desc: 'Avança rapidamente até 2,6 tiles em linha reta e para ao encostar em mob ou parede.' },
   id: 'cavaleiro', name: 'Cavaleiro', role: 'Tanque',
   desc: 'Muito HP e defesa. Provoca os inimigos e segura a linha de frente.',
   strong: 'Forte contra mobs físicos e grupos.', color: '#8fb4ff',
   base: { for: 8, agi: 5, int: 3, vit: 12, sab: 5 }, growth: { for: 0.8, agi: 0.4, int: 0.2, vit: 1.7, sab: 0.5 },
   preset: { for: 3, agi: 0, int: 0, vit: 5, sab: 1 },
-  hpMult: 1.3, mpMult: 0.8, defMult: 2.2, dmgMult: 4.8, ranged: false,
+  hpMult: 1.3, mpMult: 0.8, defMult: 2.2, dmgMult: 4.5, ranged: false,
   basic: { sc: 'for', dmg: 'fisico', interval: 1.5, vfx: 'slash' },
   sprite: { hair: '#6a4a2a', skin: '#e8b890', body: '#8896b0', accent: '#4060c0', legs: '#505a70', hat: 'helm', weapon: 'sword', shield: true },
   skills: [
@@ -45,6 +46,7 @@ const knight: ClassDef = {
 
 // ───────────────────────── Bárbaro ─────────────────────────
 const barb: ClassDef = {
+  maneuver: { name: 'Investida', lv: 12, cd: 12, dist: 2.6, kind: 'dash', icon: 'axe', col: '#ff7a4a', desc: 'Avança rapidamente até 2,6 tiles em linha reta e para ao encostar em mob ou parede.' },
   id: 'barbaro', name: 'Bárbaro', role: 'Dano corpo a corpo',
   desc: 'Dano alto, roubo de vida e defesa média. Esmaga alvos únicos.',
   strong: 'Forte contra mobs únicos e chefes físicos.', color: '#ff7a4a',
@@ -78,6 +80,7 @@ const barb: ClassDef = {
 
 // ───────────────────────── Arqueiro ─────────────────────────
 const archer: ClassDef = {
+  maneuver: { name: 'Salto', lv: 12, cd: 9, dist: 2.6, kind: 'jump', icon: 'wings', col: '#7fe070', desc: 'Salta para trás até 2,6 tiles (arco visível). Não atravessa paredes nem mobs.' },
   id: 'arqueiro', name: 'Arqueiro', role: 'Dano à distância',
   desc: 'Crítico e velocidade de ataque altos, mas frágil.',
   strong: 'Forte contra mobs voadores e lentos.', color: '#7fe070',
@@ -111,6 +114,7 @@ const archer: ClassDef = {
 
 // ───────────────────────── Mago ─────────────────────────
 const mage: ClassDef = {
+  maneuver: { name: 'Impulso Arcano', lv: 12, cd: 12, dist: 2.4, kind: 'dash', icon: 'bolt', col: '#c08aff', desc: 'Desliza até 2,4 tiles e deixa inimigos próximos lentos. Não atravessa nada.' },
   id: 'mago', name: 'Mago', role: 'Dano mágico em área',
   desc: 'AoE elemental de fogo, gelo e raio. Pouco HP e depende de MP.',
   strong: 'Forte contra hordas.', color: '#c08aff',
@@ -144,12 +148,13 @@ const mage: ClassDef = {
 
 // ───────────────────────── Clérigo ─────────────────────────
 const cleric: ClassDef = {
+  maneuver: { name: 'Empurrão Sagrado', lv: 12, cd: 10, dist: 1.8, kind: 'push', icon: 'cross', col: '#ffe680', push: 2.4, desc: 'Onda de luz que empurra suavemente os inimigos próximos e os atordoa por instantes.' },
   id: 'clerigo', name: 'Clérigo', role: 'Suporte / cura',
   desc: 'Cura, buffs e dano sagrado. Sobrevive a quase tudo.',
   strong: 'Forte contra mortos-vivos e demônios.', color: '#ffe680',
   base: { for: 5, agi: 4, int: 6, vit: 8, sab: 12 }, growth: { for: 0.5, agi: 0.3, int: 0.7, vit: 1.1, sab: 1.7 },
   preset: { for: 0, agi: 0, int: 1, vit: 2, sab: 5 },
-  hpMult: 1.0, mpMult: 1.3, defMult: 1.2, dmgMult: 0.8, ranged: true,
+  hpMult: 1.0, mpMult: 1.3, defMult: 1.2, dmgMult: 0.75, ranged: true,
   basic: { sc: 'sab', dmg: 'sagrado', interval: 1.5, vfx: 'holy' },
   sprite: { hair: '#f0e0a0', skin: '#e8b890', body: '#f0f0f0', accent: '#e8c040', legs: '#c8c8d0', hat: 'none', weapon: 'mace' },
   skills: [
@@ -177,7 +182,8 @@ const cleric: ClassDef = {
 
 // ───────────────────────── Necromante ─────────────────────────
 const necro: ClassDef = {
-  id: 'necromante', name: 'Necromante', role: 'Invocador / DoT',
+  maneuver: { name: 'Passo Sombrio', lv: 12, cd: 10, dist: 2.6, kind: 'dash', icon: 'skull', col: '#6ee0b0', desc: 'Desliza como uma sombra até 2,6 tiles, sem atravessar paredes nem mobs.' },
+  id: 'necromante', name: 'Necromante', role: 'Invocador / veneno',
   desc: 'Invoca esqueletos, envenena e drena a vida dos inimigos.',
   strong: 'Forte contra chefes com muito HP e mobs que regeneram.', color: '#6ee0b0',
   base: { for: 2, agi: 4, int: 11, vit: 5, sab: 9 }, growth: { for: 0.1, agi: 0.4, int: 1.7, vit: 0.7, sab: 1.2 },
