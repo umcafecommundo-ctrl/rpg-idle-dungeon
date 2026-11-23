@@ -9,7 +9,9 @@ export const TICK = 0.05; // 20 Hz
 
 /** XP para o próximo nível (exponencial suave). */
 export const xpToNext = (lv: number) => Math.floor(35 * lv * Math.pow(1.045, lv));
-export const killsPerLevel = (lv: number) => 40 + lv * 1.2;
+/** Abates necessários por nível. Nos primeiros níveis é bem menor (início rápido: nível 10 em ~5–8 min). */
+export const EARLY_FACTOR = (lv: number) => (lv <= 8 ? 0.26 : Math.min(1, 0.26 + 0.74 * (lv - 8) / 10));
+export const killsPerLevel = (lv: number) => (40 + lv * 1.2) * EARLY_FACTOR(lv);
 
 // Curvas de referência para mobs (nível L). Ajuste aqui para balancear tudo de uma vez.
 export const refHp = (L: number) => 30 + 24 * L;

@@ -6,6 +6,8 @@ import { STATS } from '../data/types';
 import type { Derived } from './formulas';
 import { addMods, defK, killsPerLevel, refAtk, refDef, refHp, skillMpCost, TICK, xpLevelFactor, xpToNext } from './formulas';
 import { pickW, type Rng } from './rng';
+import { AI_STEP, CLASS_AI, type AiCfg } from '../data/ai';
+import { astar, buildAiMap, freeAt, inBounds, openAt, routesAt, scorePos, blocked as losBlocked, type AiMap, type Threat, type ScoreCtx } from './ai';
 import type { Layout } from '../render/mapgen';
 
 export const ARENA_W = 12;
@@ -15,7 +17,7 @@ export interface Status { k: StatusKind; t: number; p: number; src: number; type
 export interface Buff { id: string; name: string; icon: IconKey; col: string; t: number; dur: number; mods: Mods; debuff?: boolean }
 export interface Fx { kind: 'ring' | 'proj' | 'bolt' | 'pillar' | 'slash' | 'spark' | 'rise' | 'warn' | 'meteor'; x: number; y: number; x2: number; y2: number; t: number; dur: number; col: string; r: number }
 export interface Float { x: number; y: number; text: string; col: string; t: number; big: boolean }
-export interface LootDrop { ilvl: number; tier: 0 | 1 | 2 }
+export interface LootDrop { ilvl: number; tier: 0 | 1 | 2; x: number; y: number }
 
 export interface Actor {
   id: number; team: 0 | 1; name: string; level: number; classId?: string;
@@ -34,7 +36,13 @@ export interface Actor {
   mob?: MobDef; mobXp: number; mobGold: number; isAdd: boolean;
   regenMob: number; nextAdd: number; stompAt: number; nextStomp: number; enraged: boolean; reflect: number;
   homeX: number; homeY: number; target: number;
+  // IA de posicionamento
+  aiNext: number; kiteSince: number; standUntil: number; tgtUntil: number; dashCd: number; vx: number; vy: number; lx: number; ly: number; lt: number;
+  aiEmergency?: boolean;
+  ai?: { nm: number; mode: 'engage' | 'kite'; path: { x: number; y: number }[]; cornered: boolean; emergency: boolean };
+  dbg?: AiDebug;
 }
+export interface AiDebug { cands: [number, number, number][]; dest: { x: number; y: number } | null; path: { x: number; y: number }[]; mode: string; emergency: boolean; cornered: boolean; threats: { x: number; y: number; melee: boolean }[]; ideal: number; safe: number; range: number; hp: number; dashIn: number; note: string }
 
 export interface PartyMember { name: string; derived: Derived; auto: Record<string, boolean>; isPlayer: boolean; hpFrac?: number; mpFrac?: number }
 
@@ -68,10 +76,18 @@ export class Battle {
   nid = 1; cfg: BattleCfg; rng: Rng;
   acc: Acc = { xp: 0, gold: 0, kills: 0, elites: 0, bosses: 0, dmgTaken: 0, dmgDealt: 0, deaths: 0, floorsCleared: 0, potions: 0 };
   loot: LootDrop[] = [];
+  killLog: string[] = [];           // ids dos mobs abatidos (missões)
+  sfx: string[] = [];               // sons a tocar (consumidos pelo Game)
+  shake = 0; flash = 0; lastCrit = -9;
+  miniQueue: string[] = [];         // mini-chefes pendentes (missões)
   player!: Actor; floor: number; floorKills = 0; spawnT = 0.5; bossSpawned = false;
   reviveAt = -1; potCd = 0; potMpCd = 0; banner = ''; bannerT = 0;
   playerLevel: number;
   layout: Layout | null = null;
+  static AI = true;           // liga/desliga a IA de posicionamento (comparações de balanceamento)
+  debug = false;              // guarda dados de depuração da IA
+  private _map: AiMap | null = null;
+  get aiMap(): AiMap { return this._map ??= buildAiMap(this.layout?.obstacles ?? []); }
 
   constructor(cfg: BattleCfg) {
     this.cfg = cfg; this.rng = cfg.rng; this.floor = cfg.floor; this.playerLevel = cfg.playerLevel;
@@ -90,7 +106,7 @@ export class Battle {
       gcd: 0, nextAtk: 0, status: [], buffs: [], res: {}, flying: false, slowKind: false, isPlayer: false, summon: false,
       dead: false, deadAt: 0, flash: 0, atkAnim: 0, castAnim: 0, sprite: '', color: '#fff', scale: 1, variant: 'n',
       mobXp: 0, mobGold: 0, isAdd: false, regenMob: 0, nextAdd: 0, stompAt: -1, nextStomp: 0, enraged: false, reflect: 0,
-      homeX: 6, homeY: 11, target: 0,
+      homeX: 6, homeY: 11, target: 0, aiNext: 0, kiteSince: -1, standUntil: 0, tgtUntil: 0, dashCd: 0, vx: 0, vy: 0, lx: 0, ly: 0, lt: -9,
     };
   }
 
@@ -193,8 +209,9 @@ export class Battle {
   applyDamage(src: Actor, tgt: Actor, dmg: number, type: DmgType, crit: boolean) {
     tgt.hp -= dmg; tgt.flash = 0.12;
     if (tgt.team === 0) this.acc.dmgTaken += dmg; else if (src.team === 0) this.acc.dmgDealt += dmg;
+    if (crit && src.team === 0 && this.cfg.fx) { this.shake = Math.max(this.shake, dmg > tgt.maxHp * 0.2 ? 0.9 : 0.5); if (this.t - this.lastCrit > 0.25) { this.sfx.push('crit'); this.lastCrit = this.t; } }
     if (dmg === 0) this.float(tgt.x, tgt.y, 'Imune', '#aaa');
-    else this.float(tgt.x, tgt.y, (crit ? '' : '') + dmg, tgt.team === 0 ? '#ff6a6a' : crit ? '#ffe040' : DMG_COL[type] ?? '#fff', crit);
+    else this.float(tgt.x, tgt.y, (crit ? '' : '') + dmg, tgt.team === 0 ? '#ff6a6a' : crit ? '#ffe040' : DMG_COL[type] ?? '#fff', crit || (src.team === 0 && dmg > tgt.maxHp * 0.3));
     if (dmg > 0 && src.m.lifesteal && src.team === 0) this.healActor(src, dmg * src.m.lifesteal, true);
     if (tgt.hp <= 0) this.kill(tgt, src);
   }
@@ -212,6 +229,7 @@ export class Battle {
     t.dead = true; t.deadAt = this.t; t.hp = 0;
     if (t.team === 1) {
       this.acc.kills++;
+      if (t.mob && !t.isAdd) this.killLog.push(t.mob.id);
       const lv = t.level;
       const xp = t.mobXp * xpLevelFactor(this.playerLevel, lv) * (1 + this.cfg.xpBonus);
       this.acc.xp += xp; this.acc.gold += t.mobGold * (1 + this.cfg.goldBonus);
@@ -223,7 +241,7 @@ export class Battle {
         const chance = (tier === 2 ? 2 : tier === 1 ? 0.4 : 0.07) * act.drop * (1 + this.cfg.dropBonus);
         let n = Math.floor(chance);
         if (this.rng() < chance - n) n++;
-        for (let i = 0; i < n; i++) this.loot.push({ ilvl: lv, tier: tier as 0 | 1 | 2 });
+        for (let i = 0; i < n; i++) this.loot.push({ ilvl: lv, tier: tier as 0 | 1 | 2, x: t.x, y: t.y });
         if (this.cfg.activity === 'dungeon') this.floorKills++;
       }
       this.addFx('spark', t.x, t.y, 0, 0, 0.4, t.color, 1);
@@ -292,6 +310,10 @@ export class Battle {
 
   private spawner(dt: number) {
     const act = ACT[this.cfg.activity];
+    if (this.miniQueue.length && !this.actors.some((a) => a.mob?.boss && !a.dead)) {
+      const id = this.miniQueue.shift()!; const def = MOB_BY_ID[id];
+      if (def) { this.makeMob(def, Math.max(1, this.playerLevel), 'b', ARENA_W / 2, 3.6); this.banner = `${def.name} apareceu!`; this.bannerT = 2.5; this.sfx.push('boss'); }
+    }
     const alive = this.actors.filter((a) => a.team === 1 && !a.dead && !a.isAdd).length;
     if (this.cfg.activity === 'chefe') {
       if (alive === 0) {
@@ -348,6 +370,8 @@ export class Battle {
       this.floats = this.floats.filter((f) => f.t < 1.1);
     }
     if (this.bannerT > 0) this.bannerT -= dt;
+    if (this.shake > 0) this.shake = Math.max(0, this.shake - dt * 3);
+    if (this.flash > 0) this.flash = Math.max(0, this.flash - dt * 2);
     if (this.potCd > 0) this.potCd -= dt;
     if (this.potMpCd > 0) this.potMpCd -= dt;
   }
@@ -438,12 +462,147 @@ export class Battle {
     a.target = tgt.id;
     const d = this.dist(a, tgt);
     a.face = tgt.x >= a.x ? 1 : -1;
+    if (Battle.AI && a.team === 0 && !a.summon && a.classId && CLASS_AI[a.classId]) { if (this.allyAi(a, tgt, mv)) return; }
     if (a.team === 0 && a.skills.length && this.trySkills(a, tgt, mv)) return;
     const reach = a.range * (a.mob?.boss ? a.scale * 0.6 : 1);
     if (d > reach) { this.moveTo(a, tgt.x, tgt.y, mv, reach * 0.9); return; }
     // kiting de longa distância
     if (a.team === 0 && a.range > 3 && d < 2.2 && a.isPlayer) this.moveTo(a, a.x + (a.x - tgt.x), a.y + (a.y - tgt.y) + 1, mv * 0.7, 0);
     if (this.t >= a.nextAtk) { this.basicAttack(a, tgt); a.nextAtk = this.t + this.interval(a); }
+  }
+
+
+  // ───────────── IA de posicionamento e alvo ─────────────
+  private aiTarget(a: Actor, cfg: AiCfg): Actor | null {
+    if (a.focus !== undefined) {
+      const f = this.actors.find((x) => x.id === a.focus);
+      if (f && !f.dead && f.team === 1) return f;
+      a.focus = undefined;
+    }
+    const cur = this.actors.find((x) => x.id === a.target);
+    if (cur && !cur.dead && cur.team === 1 && this.t < a.tgtUntil) return cur;
+    let best: Actor | null = null, bs = -1e9;
+    for (const e of this.actors) {
+      if (e.team !== 1 || e.dead) continue;
+      const d = this.dist(a, e);
+      let s = -d * 0.3;
+      if (cfg.prio === 'lowhp') s += (1 - e.hp / e.maxHp) * 4 - Math.min(e.hp / Math.max(1, a.stats[a.basic.sc] * 20), 3) * 0.3;
+      else if (cfg.prio === 'danger') s += (e.range > 2.8 ? 3 : 0) + (e.variant !== 'n' ? 1.5 : 0) + (e.regenMob ? 0.5 : 0);
+      else if (cfg.prio === 'advantage') { const m = (e.res[a.basic.dmg] ?? 1) * (1 + (a.m.vs?.[e.kind!] ?? 0) + (e.slowKind ? a.m.vsSlow ?? 0 : 0)); s += (m - 1) * 3; }
+      else s -= d * 0.2;
+      if (cfg.style === 'kite' && e.range > 2.8 && cfg.prio !== 'nearest') s += 2.5; // à distância: inimigos ranged primeiro
+      if (cur === e) s += 0.8; // histerese
+      if (s > bs) { bs = s; best = e; }
+    }
+    if (best) a.tgtUntil = this.t + 0.6;
+    return best;
+  }
+
+  private threatsFor(a: Actor): Threat[] {
+    const out: Threat[] = [];
+    for (const e of this.actors) {
+      if (e.team !== 1 || e.dead) continue;
+      // velocidade medida entre reavaliações
+      if (this.t - e.lt >= 0.1) { if (this.t - e.lt < 0.6) { e.vx = (e.x - e.lx) / (this.t - e.lt); e.vy = (e.y - e.ly) / (this.t - e.lt); } else { e.vx = e.vy = 0; } e.lx = e.x; e.ly = e.y; e.lt = this.t; }
+      if (this.dist(a, e) > 9.5) continue;
+      out.push({ x: e.x, y: e.y, vx: e.vx, vy: e.vy, range: e.range * (e.mob?.boss ? e.scale * 0.6 : 1), spd: e.spd, melee: e.range < 2.8, stomp: e.stompAt > 0 });
+    }
+    return out;
+  }
+
+  private aiPlan(a: Actor, tgt: Actor, cfg: AiCfg) {
+    const map = this.aiMap;
+    const threats = this.threatsFor(a);
+    const hpF = a.hp / a.maxHp;
+    const nearCount = threats.filter((e) => Math.hypot(e.x - a.x, e.y - a.y) < cfg.nearR).length;
+    const meleeClose = threats.filter((e) => e.melee && Math.min(Math.hypot(e.x - a.x, e.y - a.y), Math.hypot(e.x + e.vx * 0.5 - a.x, e.y + e.vy * 0.5 - a.y)) < Math.max(cfg.safe, 1.8)).length;
+    const curOpen = openAt(map, a.x, a.y);
+    const trapped = curOpen < cfg.minOpen && meleeClose > 0;
+    const surrounded = nearCount > cfg.maxNear + 1;
+    const emergency = (hpF < cfg.retreatHp && nearCount > 0) || surrounded || trapped;
+    let threatened = cfg.style === 'kite' ? meleeClose > 0 : ((nearCount > cfg.maxNear && hpF < 0.65) || (hpF < cfg.retreatHp && nearCount > 0));
+    // recuar não está funcionando (mobs colados por muito tempo)? desiste e luta por um instante
+    if (threatened && !emergency) { if (a.kiteSince < 0) a.kiteSince = this.t; if (this.t - a.kiteSince > 3 && this.t > a.standUntil) { a.standUntil = this.t + 1.6; a.kiteSince = -1; } if (this.t < a.standUntil) threatened = false; }
+    else if (!threatened) a.kiteSince = -1;
+    const mode: 'engage' | 'kite' = threatened ? 'kite' : 'engage';
+    const zones = this.actors.filter((e) => e.team === 1 && !e.dead && e.stompAt > 0).map((e) => ({ x: e.x, y: e.y, r: 3.4 }));
+    const w = emergency ? { ...cfg.w, melee: cfg.w.melee * 2, ideal: cfg.w.ideal * 0.3, center: 0, range: 0 } : cfg.w;
+    const ctx: ScoreCtx = { cfg, w, map, ax: a.x, ay: a.y, tgt: { x: tgt.x, y: tgt.y }, range: a.range, threats, zones, cx: 6, cy: 8.5, emergency };
+    const cur = scorePos(ctx, a.x, a.y);
+    const cands: [number, number, number][] = [];
+    const R = cfg.radius;
+    const tx0 = Math.floor(a.x), ty0 = Math.floor(a.y);
+    for (let dy = -R; dy <= R; dy++) for (let dx = -R; dx <= R; dx++) {
+      if (dx * dx + dy * dy > R * R) continue;
+      const x = tx0 + dx + 0.5, y = ty0 + dy + 0.5;
+      if (!inBounds(x, y) || !freeAt(map.obstacles, x, y)) continue;
+      if (openAt(map, x, y) < Math.min(cfg.minOpen, curOpen) && routesAt(map, x, y) < 0.5) continue; // nunca recua para beco/canto
+      cands.push([x, y, scorePos(ctx, x, y)]);
+    }
+    cands.sort((p, q) => q[2] - p[2]);
+    let dest: { x: number; y: number } | null = null, path: { x: number; y: number }[] = [], cornered = false, note = '';
+    const avoid = this.actors.filter((e) => e.team === 1 && !e.dead);
+    const margin = mode === 'engage' ? 0.8 : 0.05;
+    for (let i = 0; i < Math.min(3, cands.length); i++) {
+      const c = cands[i];
+      if (c[2] < cur + margin) break;
+      const p = astar(map, a.x, a.y, c[0], c[1], avoid);
+      if (p && p.length <= R * 2.4) { dest = { x: c[0], y: c[1] }; path = p; break; }
+    }
+    if (!dest && mode === 'kite') { cornered = true; note = 'sem posição melhor'; }
+    a.ai = { mode, path, cornered, emergency, nm: Math.min(99, ...threats.filter((e) => e.melee).map((e) => Math.hypot(e.x - a.x, e.y - a.y))) };
+    // último recurso: salto / teleporte / empurrão / investida
+    const dash = cfg.dash;
+    if (dash && emergency && (cornered || surrounded || hpF < cfg.retreatHp) && this.t >= a.dashCd) {
+      let bx = 0, by = 0, bs = cur + 2.5, found = false;
+      for (const c of cands) {
+        const d = Math.hypot(c[0] - a.x, c[1] - a.y); if (d < 1.5 || d > dash.dist) continue;
+        if (losBlocked(map.obstacles, a.x, a.y, c[0], c[1]) ) continue;
+        if (c[2] > bs) { bs = c[2]; bx = c[0]; by = c[1]; found = true; }
+      }
+      if (found) { this.doDash(a, bx, by, dash); a.dashCd = this.t + dash.cd; a.ai.path = []; dest = null; note = 'dash'; }
+    }
+    a.aiEmergency = emergency;
+    if (this.debug) a.dbg = { cands: cands.slice(0, 120), dest, path, mode, emergency, cornered, threats: threats.map((e) => ({ x: e.x, y: e.y, melee: e.melee })), ideal: cfg.ideal, safe: cfg.safe, range: a.range, hp: hpF, dashIn: Math.max(0, a.dashCd - this.t), note };
+  }
+
+  private doDash(a: Actor, x: number, y: number, d: NonNullable<AiCfg['dash']>) {
+    this.addFx('ring', a.x, a.y, 0, 0, 0.35, '#9ad0ff', 1.4);
+    this.addFx('spark', a.x, a.y, 0, 0, 0.45, '#cfe8ff', 1.2);
+    for (const e of this.enemies) {
+      const dd = this.dist(a, e);
+      if (d.slow && dd < d.slow + 0.8) e.status.push({ k: 'slow', t: 2.5, p: 0, src: a.id });
+      if (d.push && dd < d.push) { const dx = e.x - a.x, dy = e.y - a.y, l = Math.hypot(dx, dy) || 1; e.x += (dx / l) * 1.6; e.y += (dy / l) * 1.6; if (e.variant !== 'b') e.status.push({ k: 'stun', t: 0.7, p: 0, src: a.id }); }
+    }
+    a.x = x; a.y = y; a.px = x; a.py = y;
+    this.addFx('ring', x, y, 0, 0, 0.35, '#9ad0ff', 1.2);
+    this.float(a.x, a.y - 0.8, d.name + '!', '#9ad0ff');
+  }
+
+  private allyAi(a: Actor, tgt: Actor, mv: number): boolean {
+    const cfg = CLASS_AI[a.classId!];
+    if (this.t >= a.aiNext || !a.ai) { this.aiPlan(a, tgt, cfg); a.aiNext = this.t + AI_STEP; }
+    const ai = a.ai!;
+    if (a.skills.length && this.trySkills(a, tgt, mv)) return true;
+    const d = this.dist(a, tgt);
+    // segue o caminho escolhido (A*)
+    let step = mv;
+    while (ai.path.length && step > 0) {
+      const n = ai.path[0]; const dx = n.x - a.x, dy = n.y - a.y, l = Math.hypot(dx, dy);
+      if (l < 0.12) { ai.path.shift(); continue; }
+      const s = Math.min(step, l); a.x += (dx / l) * s; a.y += (dy / l) * s; step -= s;
+      if (Math.abs(dx) > 0.05) a.face = dx > 0 ? 1 : -1;
+      if (s >= l - 0.001) ai.path.shift();
+    }
+    const moving = ai.path.length > 0;
+    const d2 = this.dist(a, tgt);
+    if (d2 <= a.range && this.t >= a.nextAtk && (ai.mode === 'engage' || ai.cornered || !moving || ai.nm > (cfg.style === 'melee' ? 0 : 1.5))) {
+      a.face = tgt.x >= a.x ? 1 : -1; this.basicAttack(a, tgt); a.nextAtk = this.t + this.interval(a);
+    } else if (!moving && d2 > a.range * 0.95 && ai.mode === 'engage') {
+      this.moveTo(a, tgt.x, tgt.y, mv, a.range * 0.85); // fora de alcance e sem posição melhor: aproxima
+    }
+    void d;
+    return true;
   }
 
   private moveTo(a: Actor, x: number, y: number, step: number, stop: number) {
@@ -455,6 +614,7 @@ export class Battle {
   }
 
   private pickTarget(a: Actor): Actor | null {
+    if (a.team === 0 && Battle.AI && !a.summon && a.classId && CLASS_AI[a.classId]) return this.aiTarget(a, CLASS_AI[a.classId]);
     if (a.team === 0) {
       if (a.focus !== undefined) {
         const f = this.actors.find((x) => x.id === a.focus);
@@ -495,6 +655,8 @@ export class Battle {
 
   private should(a: Actor, s: Skill, tgt: Actor): boolean {
     const en = this.enemies;
+    const cfg = Battle.AI && a.classId ? CLASS_AI[a.classId] : undefined;
+    if (cfg?.emergencySkills.includes(s.id) && !a.aiEmergency && en.filter((e) => this.dist(a, e) < 3).length < 3) return false; // guardada para emergência
     switch (s.kind) {
       case 'atk': {
         if (!s.all && !s.self && this.dist(a, tgt) > a.range) return false;
@@ -530,16 +692,25 @@ export class Battle {
     }
   }
 
-  private trySkills(a: Actor, tgt: Actor, mv: number): boolean {
+  private trySkills(a: Actor, tgt0: Actor, mv: number): boolean {
+    let tgt = tgt0;
     if (this.t < a.gcd) return false;
     for (let i = a.skills.length - 1; i >= 0; i--) {
-      const s = a.skills[i];
+      const s = a.skills[i]; tgt = tgt0;
       if ((a.cd[s.id] ?? 0) > this.t) continue;
       const cost = skillMpCost(s.mp, a.level);
       if (a.mp < cost) continue;
       const manual = a.force === s.id;
       if (!manual && !(a.auto[s.id] ?? true)) continue;
-      if (!manual && !this.should(a, s, tgt)) continue;
+      let useT = tgt;
+      const cc = Battle.AI && a.classId ? CLASS_AI[a.classId]?.controlSkills.includes(s.id) : false;
+      if (cc && !manual) { // controle (lentidão/congelar/atordoar) no mob que está chegando
+        let best: Actor | null = null, bd = 4.6;
+        for (const e of this.enemies) { const dd = this.dist(a, e); if (e.range < 2.8 && e.variant !== 'b' && dd < bd && !e.status.some((x) => x.k === 'slow' || x.k === 'stun' || x.k === 'freeze')) { bd = dd; best = e; } }
+        if (best) useT = best;
+      }
+      if (!manual && !this.should(a, s, useT)) continue;
+      tgt = useT;
       if (s.kind === 'atk' && !s.all) {
         const need = s.self ? (s.r ?? 2) + 0.3 : a.range;
         const dd = s.self ? Math.min(...this.enemies.map((e) => this.dist(a, e))) : this.dist(a, tgt);

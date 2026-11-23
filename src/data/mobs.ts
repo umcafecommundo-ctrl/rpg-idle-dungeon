@@ -34,7 +34,12 @@ export const BOSSES: MobDef[] = [
   { id: 'senhor', name: 'Senhor Demônio', kind: 'demonio', hp: 14, atk: 2.0, def: 1.6, spd: 1.8, interval: 1.5, range: 4.5, dmg: 'fogo', xp: 18, gold: 16, sprite: 'imp', color: '#8a1030', boss: true, mechs: ['adds', 'stomp', 'enrage'], scale: 2.4 },
 ];
 
-export const MOB_BY_ID: Record<string, MobDef> = Object.fromEntries([...MOBS, ...BOSSES].map((m) => [m.id, m]));
+/** Mini-chefes de início de jogo (missões). */
+export const MINIBOSSES: MobDef[] = [
+  { id: 'rato_albino', name: 'Rato Albino', kind: 'fera', hp: 3.6, atk: 1.2, def: 1, spd: 2.3, interval: 1.1, range: 1.4, dmg: 'fisico', xp: 7, gold: 6, sprite: 'rato', color: '#f0d8e0', boss: true, mechs: ['enrage'], scale: 1.7 },
+];
+
+export const MOB_BY_ID: Record<string, MobDef> = Object.fromEntries([...MOBS, ...BOSSES, ...MINIBOSSES].map((m) => [m.id, m]));
 
 export function resistOf(m: MobDef): Partial<Record<DmgType, number>> {
   return { ...KIND_RES[m.kind], ...(m.res ?? {}) };

@@ -75,6 +75,10 @@ const benchSpr = makeSprite('bench', 16, 10, (g) => { R(g, 1, 6, 2, 4, '#4a2e1a'
 const crateSpr = makeSprite('crate', 14, 14, (g) => { R(g, 0, 1, 14, 13, '#9a6a38'); R(g, 0, 1, 14, 2, '#c08a50'); R(g, 1, 3, 12, 1, '#6a4420'); R(g, 6, 3, 2, 11, '#6a4420'); R(g, 0, 8, 14, 1, '#6a4420'); R(g, 0, 13, 14, 1, 'rgba(0,0,0,0.3)'); });
 const lampSpr = makeSprite('lamp', 10, 26, (g) => { R(g, 4, 6, 2, 20, '#3a3a44'); R(g, 3, 24, 4, 2, '#2a2a34'); R(g, 1, 0, 8, 7, '#3a3a44'); R(g, 2, 1, 6, 5, '#ffe9a0'); R(g, 3, 1, 2, 2, '#fffbe0'); });
 const lampOff = makeSprite('lampoff', 10, 26, (g) => { R(g, 4, 6, 2, 20, '#3a3a44'); R(g, 3, 24, 4, 2, '#2a2a34'); R(g, 1, 0, 8, 7, '#3a3a44'); R(g, 2, 1, 6, 5, '#8a8a70'); });
+const chestSpr = (open: boolean) => makeSprite('chest' + (open ? 'o' : 'c'), 16, 14, (g) => {
+  R(g, 1, 5, 14, 8, '#7a4a22'); R(g, 1, 5, 14, 2, '#9a6a34'); R(g, 1, 9, 14, 1, '#4a2a12'); R(g, 0, 4, 16, 2, '#c8a040'); R(g, 0, 11, 16, 2, '#c8a040'); R(g, 7, 6, 2, 5, '#c8a040');
+  if (open) { R(g, 1, 0, 14, 4, '#7a4a22'); R(g, 2, 1, 12, 2, '#ffe060'); } else { R(g, 1, 1, 14, 4, '#8a5a2a'); R(g, 1, 1, 14, 1, '#a87a44'); R(g, 6, 5, 4, 4, '#3a3a44'); R(g, 7, 6, 2, 2, '#e8c040'); }
+});
 const fountainSpr = makeSprite('fountain', 40, 36, (g) => {
   disc(g, 20, 22, 17, '#8a8a98'); disc(g, 20, 22, 15, '#6a6a7a'); disc(g, 20, 22, 13, '#4a90c0'); R(g, 18, 8, 4, 14, '#9a9aa8'); R(g, 16, 6, 8, 3, '#b0b0be'); disc(g, 20, 6, 3, '#b8b8c8');
 });
@@ -132,10 +136,10 @@ export class TownScene {
   }
 
   /** Desenha a cidade inteira. T.ox/oy já incluem o deslocamento da câmera. */
-  draw(g: G, T: Tx, town: Town, now: number, drawPlayer: (x: number, y: number) => void) {
+  draw(g: G, T: Tx, town: Town, now: number, drawPlayer: (x: number, y: number) => void, nightOv?: number) {
     const { ox, oy, S } = T; const X = (x: number) => ox + x * 16 * S, Y = (y: number) => oy + y * 16 * S;
     const dt = Math.min(0.1, (now - this.lastNow) / 1000); this.lastNow = now; if (dt > 0) this.update(dt, town);
-    const night = Town.nightness();
+    const night = nightOv ?? Town.nightness();
     g.drawImage(this.ground, ox, oy, TOWN.w * 16 * S, TOWN.h * 16 * S);
     // água da fonte (animada) atrás do sprite
     // y-sort
@@ -160,6 +164,15 @@ export class TownScene {
         if (b.kind === 'portal') this.drawPortal(g, X(b.x + b.w / 2), Y(b.y + b.h) - 14 * S, S, now);
       } });
     }
+    // baú trancado e Sábio
+    items.push({ y: TOWN.chest.y + 0.95, draw: () => {
+      const cx = X(TOWN.chest.x + 0.5), cy = Y(TOWN.chest.y + 0.95); shadow(TOWN.chest.x + 0.5, TOWN.chest.y + 0.95, 7);
+      const ready = town.chestState === 'ready';
+      if (town.chestState !== 'open') { const gl = 0.35 + 0.25 * Math.sin(now * 0.005); g.fillStyle = ready ? `rgba(255,220,100,${gl})` : `rgba(160,120,255,${gl * 0.5})`; g.beginPath(); g.ellipse(cx, cy - 5 * S, 12 * S, 8 * S, 0, 0, 7); g.fill(); }
+      g.drawImage(chestSpr(town.chestState === 'open'), cx - 8 * S, cy - 13 * S, 16 * S, 14 * S);
+      if (town.chestState !== 'open' && Math.hypot(town.player.x - TOWN.chest.x, town.player.y - TOWN.chest.y) < 7) { g.font = `700 ${Math.max(8, 4.6 * S)}px ui-monospace, monospace`; g.textAlign = 'center'; g.strokeStyle = '#0a0610'; g.lineWidth = 3; g.fillStyle = '#ffe9b0'; const t = ready ? 'Baú pronto!' : 'Baú trancado'; g.strokeText(t, cx, cy - 20 * S); g.fillText(t, cx, cy - 20 * S); }
+    } });
+    if (town.sage) items.push({ y: TOWN.sage.y + 0.4, draw: () => { shadow(TOWN.sage.x + 0.5, TOWN.sage.y + 0.4, 6); drawPerson(g, X(TOWN.sage.x + 0.5), Y(TOWN.sage.y + 0.4), S, 'sage', { hair: '#e8e8f0', skin: '#e0b088', body: '#3a5aa0', accent: '#e8c040', legs: '#2a3a70', hat: 'wizard', weapon: 'staff' }, 1, now); g.fillStyle = '#ffe040'; g.font = `700 ${5 * S}px monospace`; g.textAlign = 'center'; g.fillText('!', X(TOWN.sage.x + 0.5), Y(TOWN.sage.y + 0.4) - (21 + Math.sin(now * 0.006) * 1.5) * S); } });
     items.push({ y: TOWN.fountain.y + 1.6, draw: () => {
       const cx = X(TOWN.fountain.x + 1), cy = Y(TOWN.fountain.y + 1.3); const c = fountainSpr;
       shadow(TOWN.fountain.x + 1, TOWN.fountain.y + 1.9, 18); g.drawImage(c, cx - 20 * S, cy - 26 * S, c.width * S, c.height * S);
@@ -206,7 +219,7 @@ export class TownScene {
       lights.push({ x: X(10), y: Y(14), r: 4 * 16 * S, color: '#80c0ff', i: 0.35 * night });
       lights.push({ x: X(town.player.x), y: Y(town.player.y - 0.5), r: 3 * 16 * S, color: '#ffe0a0', i: 0.55 * night });
       renderLighting(g, T.W, T.H, { color: '#080c28', alpha: 0.7 * night }, lights, 0.2);
-    } else if (Town.dayPhase() > 0.7 && Town.dayPhase() < 0.8) { g.fillStyle = 'rgba(255,140,60,0.08)'; g.fillRect(0, 0, T.W, T.H); }
+    } else if (nightOv === undefined && Town.dayPhase() > 0.7 && Town.dayPhase() < 0.8) { g.fillStyle = 'rgba(255,140,60,0.08)'; g.fillRect(0, 0, T.W, T.H); }
   }
 
   private drawPortal(g: G, cx: number, cy: number, S: number, now: number) {

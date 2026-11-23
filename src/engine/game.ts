@@ -16,13 +16,15 @@ import { MAP_BY_ID as MAPS_BY_ID } from '../data/maps';
 import { addMods } from './formulas';
 import { blacksmithStock, buyPrice, effMods, equippedList, repairCost, sellPrice, stockWindow } from './shop';
 import { Town } from './town';
+import { ACTIVITY_MIN_LEVEL, CHEST_LEVEL, HINTS, LEVEL_REWARDS, MINIBOSS_QUEST, OFFLINE_TEASER_SECONDS, QUESTS, VISION, type Hint, type LevelReward, type Quest, type QuestReward } from '../data/onboarding';
+import { RARITY_COLOR } from '../data/types';
 
 export const OFFLINE_CAP = 8 * 3600;
 export const OFFLINE_EFFICIENCY = 0.85;
 
 export interface OfflineSummary {
   secs: number; capped: boolean; xp: number; gold: number; kills: number; fromLevel: number; toLevel: number;
-  items: Record<Rarity, number>; sold: number; deaths: number; best?: Item; sellGold: number;
+  items: Record<Rarity, number>; sold: number; deaths: number; best?: Item; sellGold: number; gift?: string;
 }
 
 type Listener = () => void;
@@ -39,6 +41,12 @@ export class Game {
   acc = 0; private saveT = 0; private seen = { xp: 0, gold: 0, kills: 0, elites: 0, bosses: 0, floors: 0, deaths: 0 };
   private mercCache = new Map<string, PartyMember>();
   scene: 'town' | 'field' = 'field';
+  debugAi = false;
+  surprise = false;                       // diálogo da primeira visita à cidade
+  vision: { b: Battle; t: number; cast: boolean; classId: string } | null = null;
+  banner: { text: string; sub: string; t: number } | null = null;
+  private hintGap = 0; private skillHintT = 0;
+  setDebugAi(on: boolean) { this.debugAi = on; if (this.battle) this.battle.debug = on; this.emit(); }
   town = new Town();
   transition: { title: string; sub: string; phase: 'out' | 'hold' | 'in' } | null = null;
   private boostT = 0;
@@ -67,7 +75,7 @@ export class Game {
   }
   newGame(classId: string) {
     this.save = newSave(classId); this.scene = 'field'; audio.setEnabled(true); audio.setScene('esgoto');
-    this.refreshDerived(); this.startBattle(); this.persist(); this.emit();
+    this.refreshDerived(); this.startBattle(); this.startVision(classId); this.persist(); this.emit();
   }
   subscribe = (l: Listener) => { this.listeners.add(l); return () => { this.listeners.delete(l); }; };
   getVersion = () => this.version;
@@ -128,6 +136,8 @@ export class Game {
       playerLevel: this.char.level, party, fx: true, bag: this.bag,
       xpBonus: this.derived.mods.xpPct ?? 0, goldBonus: this.derived.mods.goldPct ?? 0, dropBonus: this.derived.mods.dropPct ?? 0,
     });
+    this.battle.debug = this.debugAi;
+    { const q = this.quest; if (q?.id === MINIBOSS_QUEST && this.scene === 'field') this.battle.miniQueue.push('rato_albino'); }
     this.battle.layout = generateLayout(this.save.mapId, (Date.now() ^ 0x51ed) >>> 0);
     this.seen = { xp: 0, gold: 0, kills: 0, elites: 0, bosses: 0, floors: 0, deaths: 0 };
     this.syncBoostBuffs();
@@ -135,13 +145,21 @@ export class Game {
 
   update(dtReal: number) {
     if (!this.save) return;
+    if (this.vision) {
+      const v = this.vision; v.t += dtReal; this.acc += Math.min(dtReal, 0.25);
+      while (this.acc >= TICK) { v.b.step(TICK); this.acc -= TICK; }
+      if (!v.cast && v.t > 2.2) { v.cast = true; const u = v.b.player.skills[v.b.player.skills.length - 1]; if (u) { v.b.player.mp = v.b.player.maxMp; v.b.castManual(u.id); } }
+      if (v.t > VISION.seconds) this.endVision();
+      return;
+    }
+    if (this.banner) { this.banner.t -= dtReal; if (this.banner.t <= 0) { this.banner = null; this.emit(); } }
     this.boostT += dtReal;
     if (this.boostT >= 1) { this.tickBoosts(this.boostT); this.boostT = 0; }
     for (const t of this.toasts) t.t -= dtReal;
     if (this.toasts.length && this.toasts[0].t <= 0) this.toasts = this.toasts.filter((t) => t.t > 0);
     this.saveT += dtReal;
     if (this.saveT > 10) { this.saveT = 0; this.persist(); }
-    if (this.scene === 'town') { this.town.update(Math.min(dtReal, 0.1)); return; }
+    if (this.scene === 'town') { this.town.chestState = this.save.onboard.chestOpen ? 'open' : this.char.level >= CHEST_LEVEL ? 'ready' : 'locked'; this.town.sage = this.save.onboard.firstTown; this.town.update(Math.min(dtReal, 0.1)); return; }
     if (dtReal > 15) { this.tickBoosts(dtReal); this.applyOffline(dtReal); return; }
     this.acc += Math.min(dtReal, 0.25);
     let n = 0;
@@ -159,9 +177,18 @@ export class Game {
     if (a.bosses !== s.bosses) { sv.stats.bosses += a.bosses - s.bosses; s.bosses = a.bosses; const gm = 1 + Math.floor(Math.random() * 2); sv.gems += gm; this.toast(`Chefe derrotado! +${gm} gema${gm > 1 ? 's' : ''}`, '#ffcf6a'); }
     if (a.deaths !== s.deaths) { sv.stats.deaths += a.deaths - s.deaths; this.wearGear(a.deaths - s.deaths); s.deaths = a.deaths; }
     if (b.loot.length) {
-      for (const l of b.loot) { const it = rollItem(b.rng, l.ilvl, l.tier, undefined, this.derived.mods.dropPct ?? 0); this.receiveItem(it, true); }
+      for (const l of b.loot) {
+        const it = rollItem(b.rng, l.ilvl, l.tier, undefined, this.derived.mods.dropPct ?? 0); this.receiveItem(it, true);
+        if (it.rarity !== 'comum') { // drop brilhando por raridade, com som
+          b.addFx('pillar', l.x, l.y, 0, 0, 1.1, RARITY_COLOR[it.rarity], it.rarity === 'lendario' ? 2 : 1.3); b.addFx('spark', l.x, l.y, 0, 0, 0.8, RARITY_COLOR[it.rarity], 1.4);
+          b.float(l.x, l.y - 0.4, it.name, RARITY_COLOR[it.rarity], it.rarity !== 'raro'); b.sfx.push('drop_' + it.rarity);
+        }
+      }
       b.loot.length = 0;
     }
+    if (b.killLog.length) { for (const id of b.killLog) this.onKillId(id); b.killLog.length = 0; }
+    if (b.sfx.length) { for (const f of b.sfx) audio.sfx(f); b.sfx.length = 0; }
+    this.checkHints();
     if (sv.activity === 'dungeon' && sv.floor !== b.floor) {
       sv.floor = b.floor; sv.bestFloor[sv.mapId] = Math.max(sv.bestFloor[sv.mapId] ?? 1, b.floor);
     }
@@ -180,7 +207,7 @@ export class Game {
     if (this.scene === 'town') return;
     this.runTransition('Vila Pedrafria', 'Cidade segura — sem combate e sem ganho de XP', () => {
       this.persist(); this.scene = 'town'; this.save.inTown = true; this.town.player.x = this.town.player.px = 10; this.town.player.y = this.town.player.py = 21.5; this.town.player.path = []; this.town.pending = null;
-      audio.setScene('cidade'); this.persist();
+      audio.setScene('cidade'); this.persist(); this.onFirstTown();
     });
   }
   goField() {
@@ -280,6 +307,115 @@ export class Game {
     this.save.gold -= c; this.switchClass(id); return true;
   }
 
+
+  // ───────────── onboarding: recompensas, missões, dicas ─────────────
+  private grantItemKind(kind: string): Item | null {
+    const lv = Math.max(3, this.char.level);
+    const slotOf: Record<string, Slot> = { raro_elmo: 'elmo', raro_bota: 'bota', raro_anel: 'anel', raro_armadura: 'armadura' };
+    if (kind === 'espada_iniciante') return { id: 'starter-' + Date.now().toString(36), name: 'Espada do Iniciante', slot: 'arma', rarity: 'raro', ilvl: lv, mods: { wAtk: Math.round(8 + lv * 2.2), atkPct: 0.05, crit: 0.02 } };
+    const slot = slotOf[kind]; if (!slot) return null;
+    for (let i = 0; i < 40; i++) { const it = rollItem(Math.random, lv, 1, slot, 0.5); if (it.rarity !== 'comum') return it; }
+    return rollItem(Math.random, lv, 2, slot);
+  }
+  private grant(r: { gold?: number; gems?: number; hp?: number; mp?: number; item?: string }, label: string) {
+    const sv = this.save; const parts: string[] = [];
+    if (r.gold) { sv.gold += r.gold; parts.push(`+${r.gold} ouro`); }
+    if (r.gems) { sv.gems += r.gems; parts.push(`+${r.gems} 💎`); }
+    if (r.hp) { this.bag.hp += r.hp; sv.potions.hp = this.bag.hp; parts.push(`+${r.hp} poção HP`); }
+    if (r.mp) { this.bag.mp += r.mp; sv.potions.mp = this.bag.mp; parts.push(`+${r.mp} poção MP`); }
+    if (r.item === 'cons_atk') { sv.cons.buff_atk = (sv.cons.buff_atk ?? 0) + 3; parts.push('+3 Elixires de Força'); }
+    else if (r.item) { const it = this.grantItemKind(r.item); if (it) { this.receiveItem(it, false); parts.push(it.name); this.battle?.addFx('pillar', this.battle.player.x, this.battle.player.y, 0, 0, 1.2, RARITY_COLOR[it.rarity], 1.6); } }
+    if (parts.length) this.toast(`${label}: ${parts.join(', ')}`, '#ffe9b0');
+    this.refreshDerived();
+  }
+  private grantLevelReward(lv: number, r: LevelReward) {
+    this.grant(r, `Nível ${lv}`); this.toast(r.text, '#9ad0ff');
+  }
+
+  get quest(): Quest | null { const q = QUESTS[this.save.onboard.quest]; return q ?? null; }
+  questProgress(): { n: number; of: number } {
+    const q = this.quest; if (!q) return { n: 0, of: 0 };
+    const p = this.save.onboard.progress, g = q.goal;
+    if (g.type === 'kill' || g.type === 'killMob') return { n: Math.min(p, g.n), of: g.n };
+    if (g.type === 'level') return { n: Math.min(this.char.level, g.n), of: g.n };
+    return { n: 0, of: 1 };
+  }
+  private startQuest() {
+    const q = this.quest; if (!q) return;
+    this.save.onboard.progress = 0;
+    if (q.id === MINIBOSS_QUEST && this.battle && this.scene === 'field') this.battle.miniQueue.push('rato_albino');
+    this.checkQuestLevel();
+    if (q.goal.type === 'town' && this.scene === 'town') this.completeQuest();
+  }
+  private completeQuest() {
+    const q = this.quest; if (!q) return;
+    this.grant(q.reward, 'Missão'); this.toast(`✔ ${q.title}`, '#6ae08a'); audio.sfx('quest');
+    this.showBanner('Missão concluída!', q.reward.text);
+    this.save.onboard.quest++; this.startQuest(); this.emit();
+  }
+  private checkQuestLevel() { const q = this.quest; if (q?.goal.type === 'level' && this.char.level >= q.goal.n) this.completeQuest(); }
+  private onKillId(id: string) {
+    const q = this.quest; if (!q) return; const g = q.goal;
+    if (g.type === 'kill' || (g.type === 'killMob' && g.mob === id)) { this.save.onboard.progress++; if (this.save.onboard.progress >= g.n) this.completeQuest(); }
+    else if (g.type === 'miniboss' && g.mob === id) this.completeQuest();
+  }
+  openChest(): boolean {
+    const ob = this.save.onboard;
+    if (ob.chestOpen || this.char.level < CHEST_LEVEL) return false;
+    ob.chestOpen = true;
+    const lv = Math.max(10, this.char.level);
+    let it = rollItem(Math.random, lv, 2, undefined, 0.5);
+    for (let i = 0; i < 60 && (it.rarity === 'comum' || it.rarity === 'raro'); i++) it = rollItem(Math.random, lv, 2, undefined, 1);
+    this.save.gems += 3; this.save.gold += 400; this.receiveItem(it, false);
+    if (this.save.inventory.length < 80 && !this.save.inventory.includes(it) && !Object.values(this.char.equipped).includes(it)) this.save.inventory.push(it);
+    this.toast(`Baú aberto: ${it.name} (${it.rarity})!`, RARITY_COLOR[it.rarity]); audio.sfx('drop_epico');
+    const q = this.quest; if (q?.goal.type === 'chest') this.completeQuest();
+    this.persist(); this.emit(); return true;
+  }
+  /** Primeira ida à cidade: missão + surpresa (NPC novo) + teaser do progresso offline. */
+  private onFirstTown() {
+    const ob = this.save.onboard;
+    const q = this.quest; if (q?.goal.type === 'town') this.completeQuest();
+    if (!ob.firstTown && this.level >= 2) { ob.firstTown = true; this.surprise = true; if (ob.offlineGift === 'none') ob.offlineGift = 'pending'; this.save.cons.buff_drop = (this.save.cons.buff_drop ?? 0) + 1; this.emit(); }
+  }
+  showHint(id: string, force = false) {
+    const ob = this.save.onboard; const h = HINTS[id]; if (!h) return;
+    if (!force && (ob.hints.includes(id) || this.hint_ || Date.now() < this.hintGap)) return;
+    ob.hints.push(id); this.hint_ = { h, until: Date.now() + (h.secs ?? 6) * 1000 }; this.emit();
+  }
+  /** estado da dica atual (getter para a UI) */
+  private hint_: { h: Hint; until: number } | null = null;
+  get activeHint() { if (this.hint_ && Date.now() > this.hint_.until) { this.hint_ = null; this.hintGap = Date.now() + 5000; } return this.hint_; }
+  dismissHint() { this.hint_ = null; this.hintGap = Date.now() + 5000; this.emit(); }
+  private checkHints() {
+    if (this.scene !== 'field' || this.vision) return;
+    const ob = this.save.onboard; const b = this.battle; const p = b.player;
+    if (ob.hints.length >= 9) return;
+    if (!ob.hints.includes('start')) { this.showHint('start'); return; }
+    if (b.t < 6) return;
+    if (!ob.hints.includes('skill') && p.skills.length && b.enemies.length && p.mp >= 8) { this.showHint('skill'); return; }
+    if (!ob.hints.includes('item') && this.save.stats.items >= 1) this.showHint('item');
+    else if (!ob.hints.includes('potion') && p.hp < p.maxHp * 0.5 && this.bag.hp > 0) this.showHint('potion');
+    else if (!ob.hints.includes('boss') && b.actors.some((a) => a.mob?.boss && !a.dead)) this.showHint('boss');
+    else if (!ob.hints.includes('death') && this.save.stats.deaths >= 1) this.showHint('death');
+    else if (!ob.hints.includes('levelup') && this.level >= 2) this.showHint('levelup');
+    else if (!ob.hints.includes('town') && this.level >= 3) this.showHint('town');
+    else if (!ob.hints.includes('maps') && this.level >= 9) this.showHint('maps');
+  }
+
+  // ───────────── visão do poder final ─────────────
+  startVision(classId: string) {
+    const rng = mulberry32(777);
+    const b = new Battle({ rng, mapId: VISION.mapId, activity: 'horda', floor: 1, playerLevel: VISION.level, party: [member(classId, VISION.level, true)], fx: true, xpBonus: 0, goldBonus: 0, dropBonus: 0 });
+    b.player.hp = b.player.maxHp;
+    this.vision = { b, t: 0, cast: false, classId };
+    this.acc = 0; audio.setScene('castelo');
+  }
+  endVision() {
+    this.vision = null; this.acc = 0; audio.setScene(this.save.mapId); this.startBattle(); this.persist(); this.emit();
+  }
+  activityUnlocked(a: Activity) { return this.maxLevelEver >= ACTIVITY_MIN_LEVEL[a]; }
+
   // ───────────── XP / nível ─────────────
   gainXp(x: number): number {
     const c = this.char; let lv = 0;
@@ -288,7 +424,7 @@ export class Game {
     while (c.level < MAX_LEVEL && c.xp >= xpToNext(c.level)) { c.xp -= xpToNext(c.level); c.level++; lv++; this.onLevelUp(c); }
     if (c.level >= MAX_LEVEL) c.xp = 0;
     if (lv > 0) {
-      this.refreshDerived(); this.emit();
+      this.refreshDerived(); this.emit(); this.afterLevel();
       if (this.battle) { this.battle.float(this.battle.player.x, this.battle.player.y - 0.8, `NÍVEL ${c.level}!`, '#ffe040', true); this.battle.addFx('pillar', this.battle.player.x, this.battle.player.y, 0, 0, 0.9, '#ffe040', 2); }
       this.toast(`Nível ${c.level}!`, '#ffe040');
     }
@@ -296,7 +432,16 @@ export class Game {
   }
   private onLevelUp(c: CharSave) {
     if (c.auto) c.alloc = autoAlloc(this.cls, 3, c.alloc);
+    const r = LEVEL_REWARDS[c.level];
+    if (r && !this.save.onboard.levelRewards.includes(c.level)) { this.save.onboard.levelRewards.push(c.level); this.grantLevelReward(c.level, r); }
+    const sk = this.cls.skills.find((x) => x.lv === c.level);
+    if (sk) { this.toast(`Nova skill: ${sk.name}!`, sk.col); this.showBanner('Nova skill!', sk.name); }
   }
+  private afterLevel() {
+    if (this.battle) { this.battle.flash = 0.55; this.battle.sfx.push('levelup'); for (let i = 0; i < 3; i++) this.battle.addFx('spark', this.battle.player.x, this.battle.player.y, i, 0, 0.9 + i * 0.2, ['#ffe040', '#fff', '#ffb040'][i], 1.8 + i * 0.5); }
+    this.checkQuestLevel();
+  }
+  showBanner(text: string, sub = '') { this.banner = { text, sub, t: 3.2 }; this.emit(); }
   xpNeed() { return xpToNext(this.char.level); }
 
   // ───────────── itens ─────────────
@@ -401,7 +546,7 @@ export class Game {
   // ───────────── mapas / atividades ─────────────
   mapUnlocked(id: string) { return this.maxLevelEver >= MAP_BY_ID[id].minLv; }
   setMap(id: string) { this.travel(id); }
-  setActivity(a: Activity) { this.save.activity = a; this.save.floor = 1; this.startBattle(true); this.persist(); this.emit(); }
+  setActivity(a: Activity) { if (!this.activityUnlocked(a)) { this.toast(`${a} abre no nível ${ACTIVITY_MIN_LEVEL[a]}`, '#ff9090'); return; } this.save.activity = a; this.save.floor = 1; this.startBattle(true); this.persist(); this.emit(); }
   setMerc(slot: number, id: string | null) { this.save.mercs[slot] = id; this.mercCache.clear(); if (this.save.activity === 'party') this.startBattle(true); this.emit(); }
   mapsUnlockedList() { return MAPS.filter((m) => this.mapUnlocked(m.id)); }
 
@@ -455,6 +600,11 @@ export class Game {
       sv.stats.kills += Math.round(kills);
     }
     sum.toLevel = this.char.level;
+    if (T >= OFFLINE_TEASER_SECONDS && this.save.onboard.offlineGift === 'pending') {
+      this.save.onboard.offlineGift = 'claimed'; this.save.gems += 2;
+      const it = this.grantItemKind('raro_armadura'); if (it) { this.receiveItem(it, false, sum); sum.best = it; }
+      sum.gift = 'Recompensa do cristal por 1h de descanso: +2 💎 e um item raro!';
+    }
     this.refreshDerived(); this.startBattle();
     if (T >= 60) this.summary = sum;
     this.persist(); this.emit();

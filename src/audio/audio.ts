@@ -68,6 +68,22 @@ class AudioEngine {
     this.beatN = 0; beat(); this.timers.push(window.setTimeout(ev, 1500));
   }
   private beatN = 0;
+  /** Efeitos sonoros curtos (síntese). */
+  sfx(name: string) {
+    if (!this.ctx || !this.enabled) return;
+    const seq: Record<string, [number, number, number, OscillatorType][]> = {
+      crit: [[660, 0.06, 0.05, 'square'], [990, 0.09, 0.05, 'square']],
+      levelup: [[523, 0.12, 0.07, 'triangle'], [659, 0.12, 0.07, 'triangle'], [784, 0.12, 0.07, 'triangle'], [1047, 0.3, 0.08, 'triangle']],
+      drop_raro: [[880, 0.12, 0.05, 'sine'], [1175, 0.2, 0.05, 'sine']],
+      drop_epico: [[660, 0.1, 0.06, 'triangle'], [880, 0.1, 0.06, 'triangle'], [1319, 0.3, 0.06, 'triangle']],
+      drop_lendario: [[523, 0.1, 0.07, 'triangle'], [784, 0.1, 0.07, 'triangle'], [1047, 0.1, 0.07, 'triangle'], [1568, 0.5, 0.08, 'sine']],
+      quest: [[587, 0.1, 0.06, 'triangle'], [740, 0.1, 0.06, 'triangle'], [880, 0.25, 0.06, 'triangle']],
+      boss: [[110, 0.5, 0.1, 'sawtooth'], [82, 0.6, 0.1, 'sawtooth']],
+      click: [[500, 0.04, 0.03, 'square']],
+    };
+    let t = 0;
+    for (const [f, d, g, w] of seq[name] ?? []) { setTimeout(() => this.tone(f, d * 2.2, g, w), t * 1000); t += d * 0.8; }
+  }
   private tone(freq: number, dur: number, gain: number, wave: OscillatorType) {
     const c = this.ctx!; const o = c.createOscillator(), g = c.createGain();
     o.type = wave; o.frequency.value = freq;

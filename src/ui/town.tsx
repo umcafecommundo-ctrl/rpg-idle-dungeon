@@ -4,6 +4,7 @@ import { CONSUMABLES, plusMult, STOCK_HOURS, upgradeChance, upgradeCost, UPGRADE
 import { BUILDING_BY_ID } from '../data/town';
 import { KIND_LABEL, RARITIES, RARITY_COLOR, RARITY_LABEL, SLOT_LABEL, type Item, type Mods } from '../data/types';
 import { fmt } from '../engine/formulas';
+import { CHEST_LEVEL } from '../data/onboarding';
 import { MOD_LABEL } from '../engine/loot';
 import { buyPrice, effMods, equippedList, itemName, repairCost, sellPrice, stockRemainingMs } from '../engine/shop';
 import { game } from '../engine/game';
@@ -48,12 +49,15 @@ export const ItemTitle = ({ it }: { it: Item }) => <b style={{ color: RARITY_COL
 export function ServiceSheet({ id }: { id: string }) {
   const b = BUILDING_BY_ID[id];
   const g = useGame();
+  const title = id === 'bau' ? 'Baú trancado' : id === 'sabio' ? 'Sábio Orion' : id === 'portal' ? 'Portal' : b.npc.name + ' — ' + ({ ferreiro: 'Ferreiro', itens: 'Loja de Itens', mercado: 'Mercado', taverna: 'Taverna', guilda: 'Guilda', templo: 'Templo', banco: 'Banco', magia: 'Loja de Magia', joalheiro: 'Joalheiro' } as Record<string, string>)[id];
   return (
     <div className="sheet">
-      <div className="sheet-h"><b>{b.id === 'portal' ? 'Portal' : b.npc.name + ' — ' + ({ ferreiro: 'Ferreiro', itens: 'Loja de Itens', mercado: 'Mercado', taverna: 'Taverna', guilda: 'Guilda', templo: 'Templo', banco: 'Banco', magia: 'Loja de Magia', joalheiro: 'Joalheiro' } as Record<string, string>)[id]}</b>
+      <div className="sheet-h"><b>{title}</b>
         <button onClick={() => g.openService(null)} aria-label="Fechar">✕</button></div>
       <div className="wallet"><span>🪙 {fmt(g.save.gold)}</span><span>💎 {g.save.gems}</span></div>
       <div className="sheet-b">
+        {id === 'bau' && <ChestPanel />}
+        {id === 'sabio' && <SagePanel />}
         {id === 'ferreiro' && <Blacksmith />}
         {id === 'itens' && <ItemShop />}
         {id === 'mercado' && <Market />}
@@ -266,6 +270,32 @@ function Temple() {
         <div className="muted small">Reinicia o nível da classe ativa e concede bônus permanentes a todas as classes: +6% dano, +6% HP, +10% XP, +8% ouro por renascimento. Renascimentos: <b>{g.save.rebirths}</b></div>
         <ConfirmBtn label="Renascer" confirm="Tem certeza? Nível volta a 1" cls="btn small" disabled={!g.canPrestige()} onYes={() => g.prestige()} />
         {!g.canPrestige() && <div className="muted small">Disponível a partir do nível 100 (atual: {g.level}).</div>}</div>
+    </div>
+  );
+}
+
+function ChestPanel() {
+  const g = useGame(); const open = g.save.onboard.chestOpen; const lv = g.level;
+  return (
+    <div className="stack">
+      <div className="card" style={{ textAlign: 'center' }}>
+        <div style={{ fontSize: 46 }}>{open ? '📭' : lv >= CHEST_LEVEL ? '🎁' : '🔒'}</div>
+        {open ? <div>O baú já foi aberto. Dentro havia um item épico, gemas e ouro.</div>
+          : lv >= CHEST_LEVEL ? <><b className="hl">O fecho cedeu! O baú está pronto.</b><button className="btn" onClick={() => g.openChest()}>Abrir baú</button></>
+            : <><b>Trancado por um selo antigo.</b><div className="muted small">Abre no nível {CHEST_LEVEL}. Você está no nível {lv}.</div>
+              <div className="pbar"><i style={{ width: `${Math.min(100, (lv / CHEST_LEVEL) * 100)}%`, background: '#c8a0ff' }} /><span>{lv}/{CHEST_LEVEL}</span></div></>}
+      </div>
+    </div>
+  );
+}
+function SagePanel() {
+  const g = useGame(); const q = g.quest;
+  return (
+    <div className="stack">
+      <div className="card"><div>“O cristal é a chave. Quanto mais monstros você vence, mais forte ele — e você — fica.”</div></div>
+      {q && <div className="card"><b>Missão atual</b><div>📜 {q.title}</div><div className="muted small">Recompensa: {q.reward.text}</div></div>}
+      <div className="card"><b>⏳ Recompensa do cristal</b><div className="muted small">{g.save.onboard.offlineGift === 'pending' ? 'Deixe o jogo caçando e volte em 1 hora para receber 2 gemas e um item raro.' : g.save.onboard.offlineGift === 'claimed' ? 'Você já recolheu a recompensa do cristal.' : 'Disponível após sua primeira visita completa à cidade.'}</div></div>
+      <div className="card"><b>Dica</b><div className="muted small">Mapas novos aparecem com o nível. No Mapas, o medidor mostra qual classe rende mais em cada lugar.</div></div>
     </div>
   );
 }

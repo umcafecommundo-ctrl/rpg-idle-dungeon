@@ -3,6 +3,8 @@ import { MOBS } from '../data/mobs';
 import { ACTIVITIES } from '../data/types';
 import { runBalance, simulate } from './sim';
 
+import { Battle } from './battle';
+Battle.AI = process.env.AI !== '0';
 const lv = Number(process.argv[2] ?? 40);
 const secs = Number(process.argv[3] ?? 60);
 const t0 = Date.now();

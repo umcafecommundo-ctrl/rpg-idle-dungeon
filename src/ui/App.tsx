@@ -8,6 +8,9 @@ import { Renderer } from '../render/renderer';
 import { useGame } from './hooks';
 import { CharacterPanel, InventoryPanel, MapsPanel, SkillsPanel } from './panels';
 import { ServiceSheet } from './town';
+import { Intro } from './Intro';
+import { ClassPreview } from './ClassPreview';
+import { CLASS_PREVIEW, VISION, ACTIVITY_MIN_LEVEL } from '../data/onboarding';
 import { SERVICES } from '../data/shops';
 import { audio } from '../audio/audio';
 import { OfflineModal, SettingsPanel } from './settings';
@@ -31,7 +34,11 @@ export function App() {
     window.addEventListener('pagehide', vis);
     return () => { clearInterval(iv); document.removeEventListener('pointerdown', unlock); document.removeEventListener('visibilitychange', vis); window.removeEventListener('pagehide', vis); };
   }, []);
-  if (!g.has) return <ClassSelect />;
+  const [introDone, setIntroDone] = useState(() => { try { return localStorage.getItem('masmorra-intro') === '1'; } catch { return false; } });
+  if (!g.has) {
+    if (!introDone) return <Intro onDone={() => { try { localStorage.setItem('masmorra-intro', '1'); } catch { /* */ } setIntroDone(true); }} />;
+    return <ClassSelect />;
+  }
   return <Main />;
 }
 
@@ -42,19 +49,22 @@ function ClassSelect() {
   return (
     <div className="select">
       <h1>Masmorra Idle</h1>
-      <p className="sub">Escolha sua classe. Você pode trocar depois — cada classe mantém seu próprio progresso.</p>
+      <p className="sub">Escolha sua classe — veja cada uma em ação. Você pode trocar depois na Guilda.</p>
       <div className="cards">
-        {CLASSES.map((c) => (
-          <button key={c.id} className="ccard" style={{ borderColor: c.color }} onClick={() => game.newGame(c.id)}>
-            <canvas width={16} height={16} className="csprite" ref={(el) => { if (el) { const x = el.getContext('2d')!; x.clearRect(0, 0, 16, 16); x.drawImage(spriteFor('class:' + c.id, ''), 0, 0); } }} />
-            <div className="cinfo">
-              <b style={{ color: c.color }}>{c.name}</b> <span className="role">{c.role}</span>
-              <div className="cdesc">{c.desc}</div>
-              <div className="cstrong">{c.strong}</div>
-              <div className="cstats">{STATS.map((s) => `${STAT_LABEL[s]} ${c.base[s]}`).join(' · ')}</div>
-            </div>
-          </button>
-        ))}
+        {CLASSES.map((c) => {
+          const pv = CLASS_PREVIEW[c.id];
+          return (
+            <button key={c.id} className="ccard" style={{ borderColor: c.color }} onClick={() => { audio.unlock(); game.newGame(c.id); }}>
+              <ClassPreview id={c.id} />
+              <div className="cinfo">
+                <b style={{ color: c.color }}>{c.name}</b> <span className="role">{c.role}</span>
+                <div className="tags">{pv.tags.map((t) => <span key={t} style={{ borderColor: c.color }}>{t}</span>)}</div>
+                <div className="cstrong">{pv.best}</div>
+                <div className="cbars">{pv.bars.map(([l, v]) => <div key={l}><small>{l}</small><i><b style={{ width: `${v * 20}%`, background: c.color }} /></i></div>)}</div>
+              </div>
+            </button>
+          );
+        })}
       </div>
       <button className="link" onClick={() => setImp(!imp)}>Importar save</button>
       {imp && (
@@ -72,11 +82,21 @@ function Main() {
   const g = useGame();
   const [tab, setTab] = useState<Tab | null>(null);
   return (
-    <div className="app">
+    <div className="app" data-hint={g.activeHint?.h.target ?? ''}>
       <div className="arena">
         <CombatCanvas />
-        {!tab && !g.service && <button className="gear" aria-label="Configurações" onClick={() => setTab('cfg')}>⚙</button>}
-        {!tab && !g.service && g.scene === 'field' && <button className="homebtn" onClick={() => game.goTown()}>🏠 Voltar à cidade</button>}
+        {!g.vision && !tab && !g.service && <button className="gear" aria-label="Configurações" onClick={() => setTab('cfg')}>⚙</button>}
+        {!g.vision && !tab && !g.service && g.scene === 'field' && <button className="homebtn" onClick={() => game.goTown()}>🏠 Voltar à cidade</button>}
+        {!g.vision && !tab && !g.service && g.scene === 'field' && <button className={'aibtn' + (g.debugAi ? ' on' : '')} onClick={() => game.setDebugAi(!game.debugAi)}>IA</button>}
+        {g.vision && (
+          <div className="vision" onClick={() => game.endVision()}>
+            <div className="bars top" /><div className="bars bot" />
+            <div className="vcap">{VISION.caption}</div><div className="vskip">toque para continuar</div>
+          </div>
+        )}
+        {!g.vision && g.scene === 'field' && g.activeHint && <div className="hintbubble" onClick={() => game.dismissHint()}><b>💡</b> {g.activeHint.h.text}</div>}
+        {!g.vision && g.banner && <div className="bannerov"><div className="bt">{g.banner.text}</div><div className="bs">{g.banner.sub}</div></div>}
+        {!g.vision && !tab && !g.service && <QuestChip />}
         <div className="toasts">{g.toasts.map((t) => <div key={t.id} className="toast" style={{ color: t.col }}>{t.text}</div>)}</div>
         {g.service && !tab && <ServiceSheet id={g.service} />}
         {tab && (
@@ -92,7 +112,7 @@ function Main() {
           </div>
         )}
       </div>
-      {g.scene === 'town' ? <TownBar /> : <SkillBar />}
+      {g.vision ? null : g.scene === 'town' ? <TownBar /> : <SkillBar />}
       <nav className="nav">
         {TABS.map((t) => (
           <button key={t.id} className={tab === t.id ? 'on' : ''} onClick={() => { game.openService(null); setTab(tab === t.id ? null : t.id); }}>
@@ -103,6 +123,7 @@ function Main() {
           <span className="ico">{g.scene === 'town' ? '⚔' : '🏠'}</span><span className="lbl">{g.scene === 'town' ? 'Caçar' : 'Cidade'}</span>
         </button>
       </nav>
+      {g.surprise && !g.vision && <SurpriseModal />}
       <div className={'fade' + (g.transition && g.transition.phase !== 'in' ? ' show' : '')}>
         {g.transition && <div className="fadebox"><div className="ft">{g.transition.title}</div><div className="fs">{g.transition.sub}</div></div>}
       </div>
@@ -201,3 +222,35 @@ function TownBar() {
     </div>
   );
 }
+
+function QuestChip() {
+  const g = useGame(); const q = g.quest; const ob = g.save.onboard;
+  if (!q) {
+    if (ob.offlineGift === 'pending') return <div className="quest"><b>⏳</b> Volte em 1h para recolher a recompensa do cristal</div>;
+    return null;
+  }
+  const pr = g.questProgress();
+  return (
+    <div className="quest">
+      <div><b>📜 {q.title}</b>{pr.of > 1 && <span className="qn"> {pr.n}/{pr.of}</span>}</div>
+      {pr.of > 1 && <div className="qbar"><i style={{ width: `${(pr.n / pr.of) * 100}%` }} /></div>}
+      <div className="qr">→ {q.reward.text}</div>
+    </div>
+  );
+}
+
+function SurpriseModal() {
+  return (
+    <div className="modal">
+      <div className="mbox">
+        <h2>Sábio Orion</h2>
+        <div>“Então é você quem carrega o fragmento… Ele ainda pulsa. Cada monstro que você vence alimenta o cristal — e o cristal alimenta você.”</div>
+        <div className="muted small">O Sábio agora fica perto da fonte. Ele deu a você 1 Essência da Sorte.</div>
+        <div className="card"><div><b>⏳ Dica:</b> o cristal continua absorvendo energia enquanto você está fora, caçando. <b>Volte em 1 hora</b> e ele terá uma recompensa para você!</div></div>
+        <div className="card"><div><b>🔒 O baú trancado</b> no centro da cidade só se abre no nível 10. Algo poderoso está lá dentro…</div></div>
+        <button className="btn" onClick={() => { game.surprise = false; game.persist(); game.emit(); }}>Entendi</button>
+      </div>
+    </div>
+  );
+}
+void ACTIVITY_MIN_LEVEL;

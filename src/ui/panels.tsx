@@ -7,6 +7,7 @@ import {
   STATS, STAT_DESC, STAT_LABEL, type Item, type Slot, type Stat,
 } from '../data/types';
 import { mapEfficiency } from '../engine/efficiency';
+import { ACTIVITY_MIN_LEVEL } from '../data/onboarding';
 import { fmt, MIN_PRESTIGE_LEVEL, nodeUnlocked, skillMpCost, xpToNext } from '../engine/formulas';
 import { describeMods, itemScore, sellValue } from '../engine/loot';
 import { MAX_INV } from '../engine/save';
@@ -207,7 +208,7 @@ export function MapsPanel({ portal = false }: { portal?: boolean }) {
   return (
     <div className="stack">
       <div className="chips">
-        {ACTIVITIES.map((a) => <button key={a} className={'chip' + (sv.activity === a ? ' on' : '')} onClick={() => g.setActivity(a)}>{ACTIVITY_LABEL[a]}</button>)}
+        {ACTIVITIES.map((a) => { const un = g.activityUnlocked(a); return <button key={a} className={'chip' + (sv.activity === a ? ' on' : '') + (un ? '' : ' lockd')} onClick={() => g.setActivity(a)}>{un ? ACTIVITY_LABEL[a] : `🔒 ${ACTIVITY_LABEL[a]} (Nv ${ACTIVITY_MIN_LEVEL[a]})`}</button>; })}
       </div>
       <div className="muted small">{ACTIVITY_DESC[sv.activity]}</div>
       {!portal && g.scene === 'field' && <div className="muted small">Trocar de mapa em campo consome 1 Pergaminho de Teleporte (você tem {sv.cons.scroll_tp ?? 0}). Na cidade, o Portal é grátis.</div>}
@@ -231,8 +232,8 @@ export function MapsPanel({ portal = false }: { portal?: boolean }) {
             </div>
             <div className="muted small">{m.desc}</div>
             <div className="mobchips">
-              {m.mobs.map((x) => { const d = MOB_BY_ID[x.id]; return <span key={x.id} className="mchip">{d.name} <i>{KIND_LABEL[d.kind]}</i></span>; })}
-              <span className="mchip boss">Chefe: {boss.name}</span>
+              {un ? m.mobs.map((x) => { const d = MOB_BY_ID[x.id]; return <span key={x.id} className="mchip">{d.name} <i>{KIND_LABEL[d.kind]}</i></span>; }) : m.mobs.map((x) => <span key={x.id} className="mchip unk">??? <i>desconhecido</i></span>)}
+              <span className="mchip boss">{un ? `Chefe: ${boss.name}` : 'Chefe: ???'}</span>
             </div>
             {sv.activity === 'dungeon' && un && <div className="muted small">Melhor andar: {sv.bestFloor[m.id] ?? 1}</div>}
             {open === m.id && un && (

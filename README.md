@@ -27,6 +27,12 @@ npm run sim -- 40 45   # tabela de balanceamento no terminal: nível 40, 45 s po
 - **Mapas com arte própria**: Floresta e Cripta (chão em manchas com 4–5 variações, decalques, objetos com colisão, copas acima do personagem, luz/escuridão, partículas, água/chama animadas, música e sons procedurais). Os demais mapas ainda usam o fundo genérico.
 - Dados: `src/data/mapart.ts` (arte dos mapas), `src/data/town.ts` (layout da cidade), `src/data/shops.ts` (consumíveis, melhorias, serviços).
 
+## IA de combate e início de jogo (v3)
+- **IA de posicionamento** (`src/engine/ai.ts`, parâmetros por classe em `src/data/ai.ts`): a cada 0,15 s avalia tiles candidatos (distância ideal, espaço livre, linha de visão, medo de mobs corpo a corpo com posição prevista, cantos/becos, AoE de chefe, centro da caçada) e anda até o melhor por A*. Mapa de abertura pré-calculado, recuo em arco, desiste de recuar se os mobs colam, e usa Salto/Teleporte/Empurrão/Investida como último recurso. Skills de controle são usadas em mobs que se aproximam; skills de emergência ficam guardadas.
+- **Debug da IA**: botão “IA” no campo (ou ⚙ → Debug da IA) mostra heatmap das notas, mapa de abertura, caminho, alcance/ideal/segurança, e sliders para ajustar os pesos ao vivo.
+- **Início**: abertura pulável (~40 s) → escolha de classe com prévia animada → visão do poder final → caçada com dicas contextuais, 7 missões encadeadas (Espada do Iniciante, mini-chefe Rato Albino com armadura rara garantida, volta à cidade com surpresa, baú trancado do nível 10), recompensa a cada nível 2–10, atividades liberadas por nível, área trancada com silhuetas “???” e teaser de recompensa offline de 1 h. Tudo em `src/data/onboarding.ts`.
+- XP dos níveis iniciais foi reduzido para o nível 10 sair em ~5–9 min (meça com a classe: ver `EARLY_FACTOR` em `formulas.ts`).
+
 ## Estrutura
 ```
 src/data/      classes.ts  mobs.ts  maps.ts  items.ts  types.ts   ← tudo que se balanceia

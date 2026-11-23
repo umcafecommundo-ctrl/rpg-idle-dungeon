@@ -7,6 +7,7 @@ import { fmt } from '../engine/formulas';
 import { describeMods } from '../engine/loot';
 import { duelTable, runBalance } from '../engine/sim';
 import { useGame } from './hooks';
+import { CLASS_AI, type AiWeights } from '../data/ai';
 
 export function OfflineModal({ s, onClose }: { s: OfflineSummary; onClose: () => void }) {
   const h = Math.floor(s.secs / 3600), m = Math.floor((s.secs % 3600) / 60);
@@ -25,6 +26,7 @@ export function OfflineModal({ s, onClose }: { s: OfflineSummary; onClose: () =>
             {RARITIES.every((r) => !s.items[r]) && <span className="muted">nenhum</span>}</li>
           {s.best && <li>Melhor item: <b style={{ color: RARITY_COLOR[s.best.rarity] }}>{s.best.name}</b> <span className="muted small">({describeMods(s.best.mods, (k) => k).slice(0, 2).join(', ')})</span></li>}
         </ul>
+        {s.gift && <div className="card"><b className="hl">🎁 {s.gift}</b></div>}
         <div className="muted small">Ganhos offline têm 85% da eficiência normal. Itens comuns são vendidos automaticamente (configurável).</div>
         <button className="btn" onClick={onClose}>Continuar</button>
       </div>
@@ -65,6 +67,10 @@ export function SettingsPanel() {
         <textarea value={imp} onChange={(e) => setImp(e.target.value)} placeholder="Cole aqui um save para importar" rows={3} />
         <button className="btn small" disabled={!imp.trim()} onClick={() => { try { g.importText(imp); setMsg('Save importado!'); setImp(''); } catch { setMsg('Save inválido.'); } }}>Importar</button>
         {msg && <div className="muted small">{msg}</div>}
+      </div>
+      <div className="card">
+        <label className="row check"><input type="checkbox" checked={g.debugAi} onChange={(e) => g.setDebugAi(e.target.checked)} /> <b>Debug da IA</b> (heatmap, caminho, alcance)</label>
+        {g.debugAi && <AiTuner />}
       </div>
       <div className="card">
         <button className="btn small" onClick={() => setDbg(!dbg)}>{dbg ? 'Fechar' : 'Abrir'} tela de debug / balanceamento</button>
@@ -118,6 +124,23 @@ function BalanceDebug() {
             <tbody>{Object.entries(res.rank).map(([k, r]) => { const nm = (id: string) => CLASSES.find((c) => c.id === id)!.name.slice(0, 5); return <tr key={k}><td>{k}</td><td>{nm(r[0])}</td><td>{nm(r[1])}</td><td>{nm(r[5])}</td></tr>; })}</tbody></table></div>}
         </>
       )}
+    </div>
+  );
+}
+
+const W_LABEL: Record<keyof AiWeights, string> = { ideal: 'Distância ideal', range: 'Fora do alcance', los: 'Linha de visão', melee: 'Medo de corpo a corpo', near: 'Excesso de mobs', open: 'Espaço livre', routes: 'Rotas de fuga', corner: 'Cantos/becos', danger: 'Área de perigo', center: 'Longe do centro', move: 'Custo de mover', stay: 'Ficar parado', arc: 'Recuo em arco', cover: 'Cobertura' };
+function AiTuner() {
+  const g = useGame(); const cfg = CLASS_AI[g.save.active]; const [, force] = useState(0);
+  const set = (fn: () => void) => { fn(); force((n) => n + 1); };
+  return (
+    <div className="debug">
+      <div className="muted small">Ajuste ao vivo para {g.cls.name} (não é salvo; copie os valores para <code>src/data/ai.ts</code>).</div>
+      {([['ideal', 'Distância ideal', 1, 8, 0.1], ['safe', 'Distância de segurança', 0, 6, 0.1], ['maxNear', 'Mobs aceitos perto', 0, 10, 1], ['retreatHp', 'HP mínimo p/ recuar', 0, 1, 0.05], ['minOpen', 'Abertura mínima', 0, 1, 0.05]] as const).map(([k, l, lo, hi, st]) => (
+        <div className="row" key={k}><span className="grow small">{l}: <b>{cfg[k]}</b></span><input type="range" min={lo} max={hi} step={st} value={cfg[k]} onChange={(e) => set(() => { cfg[k] = +e.target.value; })} /></div>
+      ))}
+      {(Object.keys(cfg.w) as (keyof AiWeights)[]).map((k) => (
+        <div className="row" key={k}><span className="grow small">{W_LABEL[k]}: <b>{cfg.w[k]}</b></span><input type="range" min={0} max={k === 'danger' ? 80 : 12} step={0.1} value={cfg.w[k]} onChange={(e) => set(() => { cfg.w[k] = +e.target.value; })} /></div>
+      ))}
     </div>
   );
 }

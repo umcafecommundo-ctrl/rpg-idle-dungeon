@@ -9,6 +9,7 @@ import { mapBackground, spriteFor, tintOf, whiteOf } from './sprites';
 import { MapScene } from './mapscene';
 import { TownScene } from './townscene';
 import { TOWN } from '../data/town';
+import { CHEST_LEVEL, VISION } from '../data/onboarding';
 import { Town } from '../engine/town';
 
 const FONT = 'ui-monospace, Menlo, Consolas, "Courier New", monospace';
@@ -59,15 +60,18 @@ export class Renderer {
 
   draw(game: Game, now: number) {
     if (game.scene === 'town') { this.drawTown(game, now); return; }
-    const g = this.ctx, S = this.S, b = game.battle, dpr = this.dpr;
+    const g = this.ctx, S = this.S, b = game.vision?.b ?? game.battle, dpr = this.dpr;
     const alpha = Math.min(1, game.acc / TICK);
     const dt = Math.min(0.1, (now - this.lastNow) / 1000); this.lastNow = now;
     g.imageSmoothingEnabled = false;
     g.fillStyle = '#0c0812'; g.fillRect(0, 0, this.W, this.H);
-    const map = MAP_BY_ID[game.save.mapId];
+    const map = MAP_BY_ID[game.vision ? VISION.mapId : game.save.mapId];
+    // tremor de tela leve em críticos
+    if (b.shake > 0) { g.save(); const k = b.shake * 2.2 * S * 0.5; g.translate((Math.random() - 0.5) * k, (Math.random() - 0.5) * k); }
     // cena em camadas (se o mapa tiver arte própria) — senão, fundo genérico
     if (b.layout && this.sceneKey !== b.layout) { this.scene = new MapScene(map.id, b.layout); this.sceneKey = b.layout; }
     if (!b.layout) { this.scene = null; this.sceneKey = null; }
+    if (b.layout && game.vision) { /* visão não usa arte própria */ }
     const sc = this.scene;
     const T = { ox: this.ox, oy: this.oy, S, W: this.W, H: this.H, dpr };
     const bg = mapBackground(map);
@@ -102,6 +106,8 @@ export class Renderer {
       sc.particles.draw(g, T, 'top'); sc.particles.draw(g, T, 'fog');
       sc.fullLighting(g, T, now, b.player.dead ? undefined : { x: b.player.px + (b.player.x - b.player.px) * alpha, y: b.player.py + (b.player.y - b.player.py) * alpha });
     }
+    if (!game.vision && game.save.mapId === 'esgoto' && game.level < CHEST_LEVEL) this.drawLockedGate(game.level, now);
+    if (game.debugAi && !game.vision) this.drawAiDebug(game);
     for (const l of this.labels) l();
     // efeitos
     for (const f of b.fx) if (f.kind !== 'warn') this.drawFx(f);
@@ -112,8 +118,49 @@ export class Renderer {
       this.text(f.text, this.X(f.x), this.Y(f.y) - p * 22 * S * 0.6, f.col, px);
       g.globalAlpha = 1;
     }
-    this.hud(game, now);
-    this.minimap(game);
+    if (b.shake > 0) g.restore();
+    if (b.flash > 0) { g.fillStyle = `rgba(255,248,200,${Math.min(0.5, b.flash * 0.6)})`; g.fillRect(0, 0, this.W, this.H); }
+    if (!game.vision) { this.hud(game, now); this.minimap(game); }
+  }
+
+  /** Área bloqueada do mapa inicial: grade de ferro e silhuetas de mobs desconhecidos (“???”). */
+  private drawLockedGate(level: number, now: number) {
+    const g = this.ctx, S = this.S, dpr = this.dpr;
+    const x0 = this.X(8.2), y0 = this.Y(12.6), w = 3.6 * 16 * S, h = 2.9 * 16 * S;
+    g.fillStyle = 'rgba(6,4,12,0.78)'; g.fillRect(x0, y0, w, h);
+    for (let i = 0; i < 3; i++) { const sx = x0 + w * (0.25 + i * 0.25), sy = y0 + h * 0.62 + Math.sin(now * 0.002 + i) * S; g.fillStyle = '#000'; g.beginPath(); g.ellipse(sx, sy, 5 * S, 6 * S * (i === 1 ? 1.5 : 1), 0, 0, 7); g.fill(); g.fillStyle = 'rgba(255,60,60,0.8)'; g.fillRect(sx - 2.5 * S, sy - 2 * S, S, S); g.fillRect(sx + 1.5 * S, sy - 2 * S, S, S); }
+    g.strokeStyle = '#6a6a78'; g.lineWidth = Math.max(1, S * 0.8); g.beginPath();
+    for (let i = 0; i <= 8; i++) { g.moveTo(x0 + (w * i) / 8, y0); g.lineTo(x0 + (w * i) / 8, y0 + h); } g.moveTo(x0, y0 + h * 0.3); g.lineTo(x0 + w, y0 + h * 0.3); g.moveTo(x0, y0 + h * 0.7); g.lineTo(x0 + w, y0 + h * 0.7); g.stroke();
+    this.text('???', x0 + w / 2, y0 + 8 * dpr, '#ff9a9a', 10 * dpr); this.text(`Abre no Nv ${CHEST_LEVEL}`, x0 + w / 2, y0 + h + 8 * dpr, '#cfc0e8', 7.5 * dpr);
+    void level;
+  }
+
+
+  /** Depuração da IA: abertura do mapa, heatmap das notas de posição, caminho, alcance, distância ideal e de segurança. */
+  private drawAiDebug(game: Game) {
+    const g = this.ctx, S = this.S, b = game.battle, a = b.player, d = a.dbg, dpr = this.dpr;
+    const map = b.aiMap;
+    // mapa de abertura (tiles apertados em vermelho)
+    for (let ty = 0; ty < ARENA_H; ty++) for (let tx = 0; tx < ARENA_W; tx++) {
+      const i = ty * ARENA_W + tx; const o = map.open[i];
+      if (!map.free[i]) { g.fillStyle = 'rgba(255,0,60,0.35)'; g.fillRect(this.X(tx), this.Y(ty), 16 * S, 16 * S); }
+      else if (o < 0.6) { g.fillStyle = `rgba(255,120,0,${(0.6 - o) * 0.5})`; g.fillRect(this.X(tx), this.Y(ty), 16 * S, 16 * S); }
+    }
+    if (!d) return;
+    let lo = 1e9, hi = -1e9; for (const c of d.cands) { lo = Math.min(lo, c[2]); hi = Math.max(hi, c[2]); }
+    for (const c of d.cands) {
+      const t = hi > lo ? (c[2] - lo) / (hi - lo) : 0.5;
+      g.fillStyle = `rgba(${Math.round(255 * (1 - t))},${Math.round(80 + 175 * t)},60,0.38)`;
+      g.fillRect(this.X(c[0]) - 7 * S, this.Y(c[1]) - 7 * S, 14 * S, 14 * S);
+    }
+    const ring = (r: number, col: string, dash: number[]) => { g.strokeStyle = col; g.lineWidth = Math.max(1, dpr); g.setLineDash(dash.map((v) => v * dpr)); g.beginPath(); g.ellipse(this.X(a.x), this.Y(a.y), r * 16 * S, r * 16 * S, 0, 0, 7); g.stroke(); g.setLineDash([]); };
+    ring(d.range, 'rgba(120,255,120,0.9)', [6, 4]); ring(d.ideal, 'rgba(90,220,255,0.9)', [2, 3]); if (d.safe > 0) ring(d.safe, 'rgba(255,80,80,0.9)', [4, 3]);
+    for (const t of d.threats) { g.strokeStyle = t.melee ? '#ff5050' : '#ffb030'; g.lineWidth = 2 * dpr; g.beginPath(); g.arc(this.X(t.x), this.Y(t.y), 5 * S, 0, 7); g.stroke(); }
+    if (d.path.length) { g.strokeStyle = '#ffffff'; g.lineWidth = 2 * dpr; g.beginPath(); g.moveTo(this.X(a.x), this.Y(a.y)); for (const p of d.path) g.lineTo(this.X(p.x), this.Y(p.y)); g.stroke(); }
+    if (d.dest) { g.fillStyle = '#ffffff'; g.fillRect(this.X(d.dest.x) - 3 * S, this.Y(d.dest.y) - 3 * S, 6 * S, 6 * S); }
+    const lines = [`IA: ${d.mode}${d.emergency ? ' EMERGÊNCIA' : ''}${d.cornered ? ' ENCURRALADO' : ''}`, `HP ${Math.round(d.hp * 100)}%  dash ${d.dashIn.toFixed(1)}s ${d.note}`, 'verde=melhor nota · anel verde=alcance · ciano=ideal · vermelho=segurança'];
+    g.fillStyle = 'rgba(10,6,18,0.78)'; g.fillRect(6 * dpr, this.H - 108 * dpr, Math.min(this.W - 12 * dpr, 250 * dpr), 40 * dpr);
+    lines.forEach((l, i) => this.text(l, 10 * dpr, this.H - 100 * dpr + i * 11 * dpr, i === 0 ? '#9fffb0' : '#cfc0e8', 7.5 * dpr, 'left', i === 0));
   }
 
   private drawTown(game: Game, now: number) {
@@ -324,7 +371,7 @@ export class Renderer {
     // barra do chefe
     const boss = b.actors.find((a) => a.mob?.boss && !a.dead);
     if (boss) {
-      const bw2 = Math.min(this.W * 0.6, 240 * dpr), bx2 = (this.W - bw2) / 2, by2 = this.H - 22 * dpr;
+      const bw2 = Math.min(this.W * 0.6, 240 * dpr), bx2 = (this.W - bw2) / 2, by2 = this.H - 72 * dpr;
       this.text(boss.name + (boss.enraged ? ' (ENFURECIDO)' : ''), this.W / 2, by2 - 8 * dpr, boss.enraged ? '#ff4040' : '#ff90b0', 10 * dpr);
       this.bar(bx2, by2, bw2, 8 * dpr, boss.hp / boss.maxHp, boss.enraged ? '#ff2020' : '#c01060');
     }

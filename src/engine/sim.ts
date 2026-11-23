@@ -7,6 +7,7 @@ import { ACTIVITIES, STATS } from '../data/types';
 import { Battle, type BattleCfg, type PartyMember, type Acc } from './battle';
 import { autoAlloc, autoTalents, derive, statPointsFor, talentPointsFor, TICK, zeroStats, type Derived } from './formulas';
 import { mulberry32 } from './rng';
+import { generateLayout } from '../render/mapgen';
 
 /** Personagem "padrão" de simulação: auto-alocação + talentos automáticos, sem equipamento. */
 export function simDerived(classId: string, level: number, gear: Mods[] = [], rebirths = 0): Derived {
@@ -25,7 +26,7 @@ export interface SimOpts {
   classId: string; level: number; activity: Activity; mapId?: string;
   mobId?: string;         // restringe o pool a uma espécie (chefe = versão chefe da espécie)
   seconds?: number; seed?: number; party?: PartyMember[]; floor?: number;
-  gear?: Mods[]; rebirths?: number; derived?: Derived;
+  gear?: Mods[]; rebirths?: number; derived?: Derived; withLayout?: boolean;
 }
 export interface SimResult {
   secs: number; xpMin: number; goldMin: number; killsMin: number; dps: number; ttk: number; dmgPerKill: number;
@@ -61,6 +62,7 @@ export function simulate(o: SimOpts): SimResult {
     cfg.bossOverride = bossOfSpecies(MOB_BY_ID[o.mobId]);
   }
   const b = new Battle(cfg);
+  if (o.withLayout) b.layout = generateLayout(mapId, o.seed ?? 1234);
   // com mobId forçado, o nível do mob acompanha o do jogador (limites do mapa são ignorados via mapa amplo)
   const n = Math.round(secs / TICK);
   let minHp = 1, lootN = 0;

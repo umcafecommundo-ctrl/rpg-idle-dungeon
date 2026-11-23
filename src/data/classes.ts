@@ -17,7 +17,7 @@ const knight: ClassDef = {
   strong: 'Forte contra mobs físicos e grupos.', color: '#8fb4ff',
   base: { for: 8, agi: 5, int: 3, vit: 12, sab: 5 }, growth: { for: 0.8, agi: 0.4, int: 0.2, vit: 1.7, sab: 0.5 },
   preset: { for: 3, agi: 0, int: 0, vit: 5, sab: 1 },
-  hpMult: 1.3, mpMult: 0.8, defMult: 2.2, dmgMult: 4.4, ranged: false,
+  hpMult: 1.3, mpMult: 0.8, defMult: 2.2, dmgMult: 4.8, ranged: false,
   basic: { sc: 'for', dmg: 'fisico', interval: 1.5, vfx: 'slash' },
   sprite: { hair: '#6a4a2a', skin: '#e8b890', body: '#8896b0', accent: '#4060c0', legs: '#505a70', hat: 'helm', weapon: 'sword', shield: true },
   skills: [
@@ -83,7 +83,7 @@ const archer: ClassDef = {
   strong: 'Forte contra mobs voadores e lentos.', color: '#7fe070',
   base: { for: 6, agi: 12, int: 3, vit: 6, sab: 4 }, growth: { for: 0.5, agi: 1.8, int: 0.2, vit: 0.7, sab: 0.4 },
   preset: { for: 0, agi: 6, int: 0, vit: 3, sab: 1 },
-  hpMult: 0.9, mpMult: 0.8, defMult: 0.7, dmgMult: 1.38, ranged: true,
+  hpMult: 0.9, mpMult: 0.8, defMult: 0.7, dmgMult: 1.65, ranged: true,
   basic: { sc: 'agi', dmg: 'fisico', interval: 1.1, vfx: 'arrow' },
   sprite: { hair: '#8a5a2a', skin: '#e8b890', body: '#3a8a40', accent: '#205a28', legs: '#5a4a30', hat: 'hood', weapon: 'bow' },
   skills: [

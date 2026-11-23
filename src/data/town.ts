@@ -25,6 +25,8 @@ export const TOWN = {
     { id: 'portal', kind: 'portal', x: 8, y: 26, w: 4, h: 3, roof: '#6a6a78', roof2: '#4a4a58', wall: '#8a8a98', trim: '#7ad0ff', icon: '◎', npc: { name: 'Guardião', sprite: npc('#666', '#8896b0', '#4060c0', 'helm', 'sword') } },
   ] as BuildingDef[],
   fountain: { x: 9, y: 13 },
+  chest: { x: 10, y: 18 },   // baú trancado (abre no nível 10)
+  sage: { x: 8, y: 15 },     // Sábio Orion (aparece após a primeira visita)
   lamps: [[7, 7], [12, 7], [7, 11], [12, 11], [7, 16], [12, 16], [7, 20], [12, 20], [7, 25], [12, 25], [6, 4], [13, 4]] as [number, number][],
   trees: [[0, 1], [0, 4], [0, 8], [0, 13], [0, 16], [0, 21], [0, 25], [0, 28], [19, 1], [19, 5], [19, 9], [19, 13], [19, 16], [19, 22], [19, 26], [19, 28],
     [6, 8], [13, 12], [6, 14], [13, 15], [6, 22], [13, 20], [6, 12], [13, 8], [3, 14], [16, 14], [3, 29], [16, 29], [6, 27], [13, 28]] as [number, number][],

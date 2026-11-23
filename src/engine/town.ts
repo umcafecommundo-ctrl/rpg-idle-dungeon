@@ -15,6 +15,7 @@ export function buildBlocked(): Uint8Array {
   for (const [x, y] of TOWN.trees) b[key(x, y)] = 1;
   for (const [x, y] of TOWN.benches) b[key(x, y)] = 1;
   for (const [x, y] of TOWN.crates) b[key(x, y)] = 1;
+  b[key(TOWN.chest.x, TOWN.chest.y)] = 1;
   return b;
 }
 
@@ -27,6 +28,8 @@ export class Town {
   pending: string | null = null;
   arrived: string | null = null;
   dest: Pt | null = null;
+  chestState: 'locked' | 'ready' | 'open' = 'locked';
+  sage = false;
   private nid = 1;
 
   constructor() {
@@ -75,7 +78,10 @@ export class Town {
   /** Toque no mundo (coordenadas em tiles). Retorna 'service' se um prédio/NPC foi tocado. */
   tap(wx: number, wy: number): string | null {
     let hit: string | null = null;
-    for (const b of TOWN.buildings) {
+    const ch = TOWN.chest;
+    if (Math.abs(wx - (ch.x + 0.5)) < 1 && Math.abs(wy - (ch.y + 0.5)) < 1) hit = 'bau';
+    else if (this.sage && Math.hypot(wx - (TOWN.sage.x + 0.5), wy - (TOWN.sage.y + 0.2)) < 1.1) hit = 'sabio';
+    for (const b of (hit ? [] : TOWN.buildings)) {
       const inBld = wx >= b.x && wx <= b.x + b.w && wy >= b.y - 0.3 && wy <= b.y + b.h + 0.2;
       const e = entryOf(b);
       const nearNpc = Math.hypot(wx - (e.x + 1.6), wy - (b.y + b.h + 0.2)) < 1.1;
@@ -83,7 +89,7 @@ export class Town {
     }
     this.arrived = null;
     if (hit) {
-      const e = entryOf(BUILDING_BY_ID[hit]);
+      const e = hit === 'bau' ? { x: ch.x, y: ch.y + 1 } : hit === 'sabio' ? { x: TOWN.sage.x + 1, y: TOWN.sage.y } : entryOf(BUILDING_BY_ID[hit]);
       const path = this.findPath(this.player, { x: e.x + 0.5, y: e.y + 0.5 });
       if (path) { this.player.path = path; this.pending = hit; this.dest = path[path.length - 1]; if (path.length <= 1 && Math.hypot(this.player.x - path[0].x, this.player.y - path[0].y) < 0.6) { this.arrived = hit; this.pending = null; } }
       return hit;
@@ -96,8 +102,8 @@ export class Town {
 
   /** Teleporta o jogador para a porta de um serviço (usado ao abrir pelo menu). */
   goTo(id: string) {
-    const b = BUILDING_BY_ID[id]; if (!b) return;
-    const e = entryOf(b); const path = this.findPath(this.player, { x: e.x + 0.5, y: e.y + 0.5 });
+    const b = BUILDING_BY_ID[id]; if (!b && id !== 'bau') return;
+    const e = id === 'bau' ? { x: TOWN.chest.x, y: TOWN.chest.y + 1 } : entryOf(b); const path = this.findPath(this.player, { x: e.x + 0.5, y: e.y + 0.5 });
     if (path) { this.player.path = path; this.pending = id; this.dest = path[path.length - 1]; }
   }
 
