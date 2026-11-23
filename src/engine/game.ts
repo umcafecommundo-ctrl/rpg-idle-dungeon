@@ -200,8 +200,8 @@ export class Game {
     if (this.transition) return;
     this.transition = { title, sub, phase: 'out' }; this.emit();
     setTimeout(() => { try { fn(); } catch (e) { console.error(e); } this.transition = { title, sub, phase: 'hold' }; this.emit(); }, 330);
-    setTimeout(() => { if (this.transition) { this.transition.phase = 'in'; this.emit(); } }, 1250);
-    setTimeout(() => { this.transition = null; this.emit(); }, 1700);
+    setTimeout(() => { if (this.transition) { this.transition.phase = 'in'; this.emit(); } }, 1000);
+    setTimeout(() => { this.transition = null; this.emit(); }, 1400);
   }
   goTown() {
     if (this.scene === 'town') return;
@@ -217,14 +217,12 @@ export class Game {
       this.scene = 'field'; this.save.inTown = false; this.startBattle(); audio.setScene(this.save.mapId); this.persist();
     });
   }
-  /** Viaja para um mapa: grátis na cidade (portal); em campo consome um Pergaminho de Teleporte. */
+  /** Viaja para um mapa (grátis, da cidade ou do campo). */
   travel(id: string): boolean {
-    if (!this.mapUnlocked(id)) return false;
-    const m = MAPS_BY_ID[id];
-    if (this.scene === 'field' && id !== this.save.mapId) {
-      if ((this.save.cons.scroll_tp ?? 0) < 1) { this.toast('Precisa de um Pergaminho de Teleporte', '#ff9090'); return false; }
-      this.save.cons.scroll_tp--;
-    }
+    const m = MAPS_BY_ID[id]; if (!m) return false;
+    if (!this.mapUnlocked(id)) { this.toast(`${m.name} abre no nível ${m.minLv} (você: ${this.maxLevelEver})`, '#ff9090'); return false; }
+    if (this.scene === 'field' && id === this.save.mapId) { this.toast('Você já está neste mapa', '#9ad0ff'); return false; }
+    if (this.transition) return false;
     this.save.mapId = id; this.save.floor = 1;
     this.runTransition(m.name, `Nível recomendado ${m.minLv}–${m.maxLv}`, () => {
       this.scene = 'field'; this.save.inTown = false; this.startBattle(); audio.setScene(id); this.persist();

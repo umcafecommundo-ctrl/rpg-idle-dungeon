@@ -13,7 +13,6 @@ export const CONSUMABLES: Consumable[] = [
   { id: 'buff_def', name: 'Elixir de Pedra', desc: '+35% DEF e -10% dano recebido por 10 min.', icon: 'shield', col: '#8fb4ff', price: (l) => 60 + l * 14, kind: 'boost', boost: { dur: 600, mods: { defPct: 0.35, dmgRed: 0.1 } } },
   { id: 'buff_haste', name: 'Elixir de Rapidez', desc: '+25% vel. de ataque e -15% recarga por 10 min.', icon: 'bolt', col: '#ffe94d', price: (l) => 70 + l * 16, kind: 'boost', boost: { dur: 600, mods: { aspd: 0.25, cdr: 0.15 } } },
   { id: 'buff_drop', name: 'Essência da Sorte', desc: '+40% de chance de drop e +25% de ouro por 10 min.', icon: 'star', col: '#6ee060', price: (l) => 90 + l * 18, kind: 'boost', boost: { dur: 600, mods: { dropPct: 0.4, goldPct: 0.25 } } },
-  { id: 'scroll_tp', name: 'Pergaminho de Teleporte', desc: 'Permite trocar de mapa estando em campo, sem voltar à cidade.', icon: 'scroll', col: '#9ad0ff', price: (l) => 120 + l * 10, kind: 'teleport' },
   { id: 'scroll_xp', name: 'Pergaminho de XP', desc: '+50% de XP por 30 min (também vale offline).', icon: 'scroll', col: '#ffd24a', price: () => 0, gems: 4, kind: 'boost', boost: { dur: 1800, mods: { xpPct: 0.5 } } },
 ];
 export const CONS_BY_ID: Record<string, Consumable> = Object.fromEntries(CONSUMABLES.map((c) => [c.id, c]));
